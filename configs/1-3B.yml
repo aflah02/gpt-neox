@@ -50,7 +50,7 @@
   },
 
    # batch / data settings
-   "train_micro_batch_size_per_gpu": 4,
+   "train_micro_batch_size_per_gpu": 64,
    "data_impl": "mmap",
 
    # activation checkpointing
@@ -64,6 +64,9 @@
    "weight_decay": 0.1,
    "hidden_dropout": 0,
    "attention_dropout": 0,
+
+   # Flash Attention
+   "attention_config": [[["flash"], 24]],
 
    # precision settings
    "fp16": {
@@ -86,7 +89,7 @@
    "eval_iters": 10,
 
    # logging
-   "log_interval": 100,
+   "log_interval": 10,
    "steps_per_print": 10,
    "keep_last_n_checkpoints": 4,
    "wall_clock_breakdown": true,

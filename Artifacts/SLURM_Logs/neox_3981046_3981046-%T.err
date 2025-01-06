@@ -1,0 +1,8 @@
+/var/lib/slurm/slurmd/job3981046/slurm_script: line 21: ./write_hostfile.sh: Permission denied
+/NS/venvs/work/afkhan/neoxolmo/lib/python3.11/site-packages/deepspeed/runtime/zero/linear.py:47: FutureWarning: `torch.cuda.amp.custom_fwd(args...)` is deprecated. Please use `torch.amp.custom_fwd(args..., device_type='cuda')` instead.
+  @autocast_custom_fwd
+/NS/venvs/work/afkhan/neoxolmo/lib/python3.11/site-packages/deepspeed/runtime/zero/linear.py:66: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+  @autocast_custom_bwd
+INFO:root:NeoXArgs.calculate_derived() Total number of GPUs determined to be: 8
+srun: error: Required nodelist includes more nodes than permitted by max-node count (8 > 2). Eliminating nodes from the nodelist.
+srun: error: Unable to create step for job 3981046: Requested node configuration is not available

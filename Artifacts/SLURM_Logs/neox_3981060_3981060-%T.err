@@ -1,0 +1,22 @@
+/NS/venvs/work/afkhan/neoxolmo/lib/python3.11/site-packages/deepspeed/runtime/zero/linear.py:47: FutureWarning: `torch.cuda.amp.custom_fwd(args...)` is deprecated. Please use `torch.amp.custom_fwd(args..., device_type='cuda')` instead.
+  @autocast_custom_fwd
+/NS/venvs/work/afkhan/neoxolmo/lib/python3.11/site-packages/deepspeed/runtime/zero/linear.py:66: FutureWarning: `torch.cuda.amp.custom_bwd(args...)` is deprecated. Please use `torch.amp.custom_bwd(args..., device_type='cuda')` instead.
+  @autocast_custom_bwd
+INFO:root:NeoXArgs.calculate_derived() Total number of GPUs determined to be: 16
+Traceback (most recent call last):
+  File "/NS/venvs/work/afkhan/neoxolmo/lib/python3.11/site-packages/deepspeed/launcher/runner.py", line 455, in main
+    subprocess.check_call(ssh_check_cmd, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL, shell=True)
+  File "/usr/lib/python3.11/subprocess.py", line 413, in check_call
+    raise CalledProcessError(retcode, cmd)
+subprocess.CalledProcessError: Command 'ssh -o PasswordAuthentication=no sws-8a100-04 hostname' returned non-zero exit status 255.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/./deepy.py", line 41, in <module>
+    main()
+  File "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/./deepy.py", line 37, in main
+    deepspeed.launcher.runner.main(deepspeed_main_args)
+  File "/NS/venvs/work/afkhan/neoxolmo/lib/python3.11/site-packages/deepspeed/launcher/runner.py", line 457, in main
+    raise RuntimeError(
+RuntimeError: Using hostfile at /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Configs/Hostfiles/hosts_3981060 but host=sws-8a100-04 was not reachable via ssh. If you are running with a single node please remove /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Configs/Hostfiles/hosts_3981060 or setup passwordless ssh.
