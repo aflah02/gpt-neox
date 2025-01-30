@@ -18,8 +18,8 @@
   "vocab_file": "data/gpt2-vocab.json",
   "merge_file": "data/gpt2-merges.txt",
 
-  "save": "checkpoints",
-  "load": "checkpoints",
+  
+  # "load": "checkpoints",
   "checkpoint_validation_with_forward_pass": False,
 
   "tensorboard_dir": "tensorboard",
@@ -27,7 +27,7 @@
   "use_wandb": True,
   "wandb_host": "https://api.wandb.ai",
   "wandb_project": "neox",
-  "wandb_run_name": "1.3B-FA-BS-64-2x8xA100",
+
 
   "peak_theoretical_tflops": 312,
 

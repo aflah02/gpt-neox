@@ -151,7 +151,10 @@ test_logs/
 logs/
 tensorboard/
 src/
-
+checkpoints-*/
+Artifacts/SLURM_Logs*/*
+Artifacts/Exported_HF_Model/
+Artifacts/Profiles/
 # test data files
 tests/data/*.bin
 tests/data/*.idx

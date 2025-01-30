@@ -195,7 +195,7 @@ def get_state(
         # use the correct key into the sequential dict for given weight/provided key
         key = f"sequential.{layer_idx}.{key}"
 
-        return [state_dict["module"][key] for state_dict in state_dicts]
+        return [state_dict[key] for state_dict in state_dicts]
     else:
         # For the PipelineModule case, we don't need any key / module prefix. just grab this weight value.
         # layer_idx is also ignored because we've loaded only this layer's weights, ahead of time.
@@ -448,11 +448,11 @@ def get_mlp_naming_convention(loaded_tp_ranks, layer_idx, sequential):
     print("\n\n\n")
     print(loaded_tp_ranks[0])
     print("\n\n\n")
-    print(loaded_tp_ranks[0]["module"])
-    print(list(loaded_tp_ranks[0]["module"].keys()))
+    # print(loaded_tp_ranks[0]["module"])
+    # print(list(loaded_tp_ranks[0]["module"].keys()))
     if any(
         [
-            ["mlp.linear1.weight" in key for key in list(state_dict["module"].keys())]
+            ["mlp.linear1.weight" in key for key in list(state_dict.keys())]
             for state_dict in loaded_tp_ranks
         ]
     ):
@@ -461,7 +461,7 @@ def get_mlp_naming_convention(loaded_tp_ranks, layer_idx, sequential):
         [
             [
                 "mlp.dense_h_to_4h.weight" in key
-                for key in list(state_dict["module"].keys())
+                for key in list(state_dict.keys())
             ]
             for state_dict in loaded_tp_ranks
         ]

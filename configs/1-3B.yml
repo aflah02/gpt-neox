@@ -50,7 +50,7 @@
   },
 
    # batch / data settings
-   "train_micro_batch_size_per_gpu": 64,
+   "train_micro_batch_size_per_gpu": 32,
    "data_impl": "mmap",
 
    # activation checkpointing
@@ -93,4 +93,12 @@
    "steps_per_print": 10,
    "keep_last_n_checkpoints": 4,
    "wall_clock_breakdown": true,
+
+     "wandb_run_name": "1.3B-FA-BS-32-2x8xA100-MP-1-PP-1",
+
+  
+   "memory_profiling": true,
+   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/1.3B-FA-BS-32-2x8xA100-MP-1-PP-1",
+   "profile_step_start": 0,
+   "profile_step_stop": 100
 }

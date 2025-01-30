@@ -33,3 +33,11 @@ NeoX Setup Logs
     - See [WANDB](https://wandb.ai/aflah/neox?nw=nwuseraflah)
 - For MultiNode SLURM - 
     - https://github.com/EleutherAI/gpt-neox?tab=readme-ov-file#hostfile-generation
+- Tokenize with OLMo 1 -
+    - `python prepare_data.py -d ./data-enwiki-olmo-tokenizer -t HFTokenizer --vocab-file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/olmo_tokenizer.json`
+- Finally nailed down what hangs stuff - Setting scaled_upper_triang_masked_softmax_fusion to True
+- Set hidden dim size to be whatever was present in llama2 config.
+- When exporting set the intermediate size to what you wanted (like 11008) in config otherwise error
+- Export command - `python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/checkpoints-Hubble-6.7B-FA-BS-32-GAS-2-2x8xA100-PP-1-MP-2-OLMo-Tokenizer-Int-32768/global_step500 --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/configs/hubble/6_7B_export.yml --output_dir Artifacts/Exported_HF_Model/Hubble_6_7B/ --precision auto --architecture llama`
+- Export command - `python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/checkpoints-Hubble-1.1B-FA-BS-32-GAS-1-2x8xA100-PP-1-MP-1-OLMo-Tokenizer-Int-16896/global_step4 --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/configs/hubble/1_1B_export.yml --output_dir Artifacts/Exported_HF_Model/Hubble_1_1B/ --precision auto --architecture llama`
+- If stuff hangs delete /home/afkhan/.cache/torch_extensions

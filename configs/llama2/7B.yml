@@ -1,6 +1,6 @@
 {
   "pipe_parallel_size": 1,
-  "model_parallel_size": 1,
+  "model_parallel_size": 2,
   "make_vocab_size_divisible_by": 1,
 
   # model settings
@@ -18,10 +18,31 @@
   "norm": "rmsnorm",
   "rms_norm_epsilon": 1.0e-5,
 
-  "scaled_upper_triang_masked_softmax_fusion": true,
+  "scaled_upper_triang_masked_softmax_fusion": false,
   "bias_gelu_fusion": false,
   "use_bias_in_norms": false,
   "use_bias_in_attn_linear": false,
   "activation": "swiglu",
   "mlp_multiple_of": 256,
+
+  "train_micro_batch_size_per_gpu": 1,
+  "extra_save_iters": [1],
+
+     # misc. training settings
+   "train_iters": 320000,
+   "lr_decay_iters": 320000,
+   "distributed_backend": "nccl",
+   "lr_decay_style": "cosine",
+   "warmup": 0.01,
+   "checkpoint_factor": 10000,
+   "eval_interval": 1000,
+   "eval_iters": 10,
+
+   # logging
+   "log_interval": 100,
+   "steps_per_print": 10,
+   "keep_last_n_checkpoints": 4,
+   "wall_clock_breakdown": true,
+
+   "save": "checkpoints_llama2",
 }
