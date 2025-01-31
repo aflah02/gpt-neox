@@ -1,26 +1,26 @@
+# Hubble 2.8B
 {
    # parallelism settings ( you will want to change these based on your cluster setup, ideally scheduling pipeline stages
    # across the node boundaries )
    "pipe_parallel_size": 1,
-   "model_parallel_size": 2,
-  "make_vocab_size_divisible_by": 64, # Need to set as 64 because code makes it divisible by MP*makes_vocab_size_divisible_by
+   "model_parallel_size": 1,
+  "make_vocab_size_divisible_by": 128, # Need to set as 64 because code makes it divisible by MP*makes_vocab_size_divisible_by
 
    # model settings
    "num_layers": 32,
-   "hidden_size": 4096,
-    "intermediate_size": 33024,
-    # "intermediate_size": 32768,
+   "hidden_size": 2560,
    "num_attention_heads": 32,
+  #  "intermediate_size": 10240, # 10240*3 in non-export config (Same as Pythia)
+   "intermediate_size": 8192, # 8192*3 in non-export config (Same as Phi)
    "seq_length": 2048,
    "max_position_embeddings": 2048,
    "pos_emb": "rotary",
-  "rotary_pct": 1,
    "no_weight_tying": true,
    "gpt_j_residual": false,
    "output_layer_parallelism": "column",
     "norm": "rmsnorm",
     "rms_norm_epsilon": 1.0e-5,
-    
+
    # these should provide some speedup but takes a while to build, set to true if desired
    "scaled_upper_triang_masked_softmax_fusion": false,
    "bias_gelu_fusion": false,
@@ -105,11 +105,11 @@
    "keep_last_n_checkpoints": 4,
    "wall_clock_breakdown": true,
 
-     "wandb_run_name": "Hubble-6.7B-FA-BS-32-GAS-2-2x8xA100-PP-1-MP-2-OLMo-Tokenizer-Int-33024",
+     "wandb_run_name": "Hubble-2.8B-FA-BS-32-GAS-1-2x8xA100-PP-1-MP-1-OLMo-Tokenizer-Int-30720",
 
   
    "memory_profiling": true,
-   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-6.7B-FA-BS-32-GAS-2-2x8xA100-PP-1-MP-2-OLMo-Tokenizer-Int-33024",
+   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-2.8B-FA-BS-32-GAS-1-2x8xA100-PP-1-MP-1-OLMo-Tokenizer-Int-30720",
    "profile_step_start": 0,
    "profile_step_stop": 100,
 
@@ -137,7 +137,7 @@
 
   "vocab_file": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/olmo_tokenizer.json",
   "tokenizer_type": "HFTokenizer",
-  "save": "checkpoints-Hubble-6.7B-FA-BS-32-GAS-2-2x8xA100-PP-1-MP-2-OLMo-Tokenizer-Int-33024-v2",
+  "save": "checkpoints-Hubble-2.8B-FA-BS-32-GAS-1-2x8xA100-PP-1-MP-1-OLMo-Tokenizer-Int-30720",
   # "load": "checkpoints",
   "checkpoint_validation_with_forward_pass": False,
 
