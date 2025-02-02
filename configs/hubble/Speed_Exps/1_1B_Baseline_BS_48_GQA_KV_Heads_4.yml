@@ -117,11 +117,11 @@
    "keep_last_n_checkpoints": 4,
    "wall_clock_breakdown": true,
 
-  "wandb_run_name": "Hubble-1.1B-Baseline-BS-32-GQA-KV-Heads-4",
+  "wandb_run_name": "Hubble-1.1B-Baseline-BS-48-GQA-KV-Heads-4",
 
   
    "memory_profiling": true,
-   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-1.1B-Baseline-BS-32-GQA-KV-Heads-4",
+   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-1.1B-Baseline-BS-48-GQA-KV-Heads-4",
    "profile_step_start": 0,
    "profile_step_stop": 100,
 
@@ -149,7 +149,7 @@
 
   "vocab_file": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/olmo_tokenizer.json",
   "tokenizer_type": "HFTokenizer",
-  "save": "checkpoints-Hubble-1.1B-Baseline-BS-32-GQA-KV-Heads-4",
+  "save": "checkpoints-Hubble-1.1B-Baseline-BS-48-GQA-KV-Heads-4",
   # "load": "checkpoints",
   "checkpoint_validation_with_forward_pass": False,
 

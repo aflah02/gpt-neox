@@ -10,7 +10,7 @@
    "num_layers": 22,
    "hidden_size": 2048,
    "num_attention_heads": 32,
-   "num_kv_heads": 4, 
+   "num_kv_heads": 16, 
    "intermediate_size": 16896,
    "seq_length": 2048,
    "max_position_embeddings": 2048,
@@ -71,7 +71,7 @@
    "min_lr": 0.000012,
 
    # batch / data settings
-   "train_micro_batch_size_per_gpu": 64,
+   "train_micro_batch_size_per_gpu": 48,
   "gradient_accumulation_steps": 1,
    "data_impl": "mmap",
 
@@ -117,11 +117,11 @@
    "keep_last_n_checkpoints": 4,
    "wall_clock_breakdown": true,
 
-  "wandb_run_name": "Hubble-1.1B-Baseline-BS-64-GQA-KV-Heads-4",
+  "wandb_run_name": "Hubble-1.1B-Baseline-BS-48-GQA-KV-Heads-16",
 
   
    "memory_profiling": true,
-   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-1.1B-Baseline-BS-64-GQA-KV-Heads-4",
+   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-1.1B-Baseline-BS-48-GQA-KV-Heads-16",
    "profile_step_start": 0,
    "profile_step_stop": 100,
 
@@ -149,7 +149,7 @@
 
   "vocab_file": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/olmo_tokenizer.json",
   "tokenizer_type": "HFTokenizer",
-  "save": "checkpoints-Hubble-1.1B-Baseline-BS-64-GQA-KV-Heads-4",
+  "save": "checkpoints-Hubble-1.1B-Baseline-BS-48-GQA-KV-Heads-16",
   # "load": "checkpoints",
   "checkpoint_validation_with_forward_pass": False,
 
