@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:8
 #SBATCH -o /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Logs/hubble_1_1B_Baseline_BS_48_%x_%j_%A-%T.out
 #SBATCH -e /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Logs/hubble_1_1B_Baseline_BS_48_%x_%j_%A-%T.err
-#SBATCH --time=20:00:00
+#SBATCH --time=1:00:00
 #SBATCH --exclusive
 #SBATCH --mem=0
 

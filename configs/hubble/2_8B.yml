@@ -137,7 +137,7 @@
 
   "vocab_file": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/olmo_tokenizer.json",
   "tokenizer_type": "HFTokenizer",
-  "save": "checkpoints-Hubble-2.8B-FA-BS-32-GAS-1-2x8xA100-PP-1-MP-1-OLMo-Tokenizer-Int-24576",
+  "save": "Master_CKPTS/checkpoints-Hubble-2.8B-FA-BS-32-GAS-1-2x8xA100-PP-1-MP-1-OLMo-Tokenizer-Int-24576",
   # "load": "checkpoints",
   "checkpoint_validation_with_forward_pass": False,
 
