@@ -1,17 +1,18 @@
 #!/bin/bash
-#SBATCH --job-name="hubble_1_1B_Baseline_BS_32_RMS_Norm_Fusion"
+#SBATCH --job-name="hubble_1_1B_Baseline_BS_48_Both_Fusion_GQA_KV_Heads_4_Nodes_2_Iters_10000"
 #SBATCH --partition=a100
-#SBATCH --nodes=1
+#SBATCH --nodes=2
 #SBATCH --ntasks-per-node=8
 #SBATCH --gres=gpu:8
-#SBATCH -o /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Logs/hubble_1_1B_Baseline_BS_32_RMS_Norm_Fusion_%x_%j_%A-%T.out
-#SBATCH -e /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Logs/hubble_1_1B_Baseline_BS_32_RMS_Norm_Fusion_%x_%j_%A-%T.err
-#SBATCH --time=20:00:00
+#SBATCH -o /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Logs/hubble_1_1B_Baseline_BS_48_Both_Fusion_GQA_KV_Heads_4_Nodes_2_Iters_10000_%x_%j_%A-%T.out
+#SBATCH -e /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Logs/hubble_1_1B_Baseline_BS_48_Both_Fusion_GQA_KV_Heads_4_Nodes_2_Iters_10000_%x_%j_%A-%T.err
+#SBATCH --time=8-00:00:00 
 #SBATCH --exclusive
 #SBATCH --mem=0
+#SBATCH --nodelist=sws-8a100-01,sws-8a100-02
 
 # Activate Env
-source /NS/venvs/work/afkhan/neox_updated_env/bin/activate
+source /NS/venvs/work/afkhan/neoxolmo/bin/activate
 
 # Some potentially useful distributed environment variables
 export HOSTNAMES=`scontrol show hostnames "$SLURM_JOB_NODELIST"`
@@ -39,4 +40,4 @@ echo "Hostfile created."
 export DLTS_HOSTFILE=/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Configs/Hostfiles/hosts_$SLURM_JOBID
 
 # Change DIRECTORY to your gpt-neox clone
-cd /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox && python ./deepy.py train.py ./configs/hubble/Speed_Exps/1_1B_Baseline_BS_32_RMS_Norm_Fusion.yml
+cd /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox && python ./deepy.py train.py ./configs/hubble/Speed_Exps/1_1B_Baseline_BS_48_Both_Fusion_GQA_KV_Heads_4_Nodes_2_Iters_10000.yml

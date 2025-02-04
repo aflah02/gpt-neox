@@ -106,11 +106,11 @@
    "keep_last_n_checkpoints": 4,
    "wall_clock_breakdown": true,
 
-     "wandb_run_name": "Hubble-6.7B-Baseline-BS-24-GAS-2-KV-Heads-4-Both-Fusion",
+     "wandb_run_name": "Hubble-6.7B-Baseline-BS-24-GAS-2-KV-Heads-4-Both-Fusion-Nodes-2",
 
   
    "memory_profiling": true,
-   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-6.7B-Baseline-BS-24-GAS-2-KV-Heads-4-Both-Fusion",
+   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-6.7B-Baseline-BS-24-GAS-2-KV-Heads-4-Both-Fusion-Nodes-2",
    "profile_step_start": 0,
    "profile_step_stop": 100,
 
@@ -138,7 +138,7 @@
 
   "vocab_file": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/olmo_tokenizer.json",
   "tokenizer_type": "HFTokenizer",
-  "save": "Master_CKPTS/checkpoints-Hubble-6.7B-Baseline-BS-24-GAS-2-KV-Heads-4-Both-Fusion",
+  "save": "Master_CKPTS/checkpoints-Hubble-6.7B-Baseline-BS-24-GAS-2-KV-Heads-4-Both-Fusion-Nodes-2",
   # "load": "checkpoints",
   "checkpoint_validation_with_forward_pass": False,
 
