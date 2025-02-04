@@ -91,7 +91,7 @@
   "distributed_backend": "nccl",
   "lr_decay_style": "constant",
   "warmup": 0.01,
-  "checkpoint_factor": 100,
+  "checkpoint_factor": 500,
   "eval_interval": 100000,
   "eval_iters": 10,
 
