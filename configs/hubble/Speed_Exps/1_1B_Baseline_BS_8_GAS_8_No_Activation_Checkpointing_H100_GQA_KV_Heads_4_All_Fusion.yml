@@ -160,7 +160,7 @@
   "wandb_project": "hubble-speed-testing",
 
 
-  "peak_theoretical_tflops": 312,
+  "peak_theoretical_tflops": 989,
 
   "launcher": "slurm",
   "deepspeed_slurm": true,
