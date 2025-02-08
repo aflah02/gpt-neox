@@ -53,14 +53,16 @@ def get_params_for_weight_decay_optimization(module: Any, neox_args: Any):
             ]
             or neox_args.weight_decay == 0.0
         )
-
+    # print("Modules", module.modules())
     for module_ in module.modules():
+        # print("UTILS WEIGHT DECAY", module_)
         if is_no_weight_decay_module(module_):
             no_weight_decay_params["params"].extend(
                 [p for p in module_._parameters.values() if p is not None]
             )
         else:
             for name, param in module_._parameters.items():
+                # print(name, param)
                 if param is None:
                     continue
                 if name == "bias" or getattr(param, "_no_weight_decay", False):

@@ -7,9 +7,9 @@
   "make_vocab_size_divisible_by": 128, # Need to set as 64 because code makes it divisible by MP*makes_vocab_size_divisible_by
 
    # model settings
-   "num_layers": 22,
+   "num_layers": 1,
    "hidden_size": 2048,
-   "num_attention_heads": 32,
+   "num_attention_heads": 2,
    "intermediate_size": 16896,
    "seq_length": 2048,
    "max_position_embeddings": 2048,
@@ -40,6 +40,7 @@
    "use_bias_in_attn_linear": false,
   "activation": "swiglu",
   "mlp_multiple_of": 256,
+  "rmsnorm_fusion": true,
 
    # init methods (Copied from OLMo 2)
    "init_method": "normal",
@@ -70,15 +71,15 @@
    "min_lr": 0.000012,
 
    # batch / data settings
-   "train_micro_batch_size_per_gpu": 8,
-  "gradient_accumulation_steps": 8,
+   "train_micro_batch_size_per_gpu": 1,
+  "gradient_accumulation_steps": 1,
    "data_impl": "mmap",
 
    # activation checkpointing
-   "checkpoint_activations": false,
+   "checkpoint_activations": true,
    "checkpoint_num_layers": 1,
-   "partition_activations": false,
-   "synchronize_each_layer": false,
+   "partition_activations": true,
+   "synchronize_each_layer": true,
 
    # regularization
    "gradient_clipping": 1.0,
@@ -86,7 +87,7 @@
    "hidden_dropout": 0,
    "attention_dropout": 0,
    # Flash Attention
-   "attention_config": [[["flash"], 22]],
+  #  "attention_config": [[["flash"], 1]],
       # "attention_config": [[["flash"], 24]],
 
    # precision settings
@@ -100,15 +101,15 @@
   },
 
    # misc. training settings
-   "train_iters": 10000,
-   "lr_decay_iters": 10000,
+   "train_iters": 500,
+   "lr_decay_iters": 500,
    "distributed_backend": "nccl",
    "lr_decay_style": "cosine",
    "warmup": 0.01,
    "checkpoint_factor": 500,
    "eval_interval": 1000,
    "eval_iters": 10,
-   "extra_save_iters": [1],
+  #  "extra_save_iters": [1],
 
    # logging
    "log_interval": 10,
@@ -116,11 +117,11 @@
    "keep_last_n_checkpoints": 4,
    "wall_clock_breakdown": true,
 
-  "wandb_run_name": "Hubble-1.1B-Baseline-BS-8-GAS-8-No-Activation-Checkpointing-H100",
+  "wandb_run_name": "Dummy-BS-1",
 
   
    "memory_profiling": true,
-   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-1.1B-Baseline-BS-8-GAS-8-No-Activation-Checkpointing-H100",
+   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Dummy-BS-1",
    "profile_step_start": 0,
    "profile_step_stop": 100,
 
@@ -148,7 +149,7 @@
 
   "vocab_file": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/olmo_tokenizer.json",
   "tokenizer_type": "HFTokenizer",
-  "save": "Master_CKPTS/checkpoints-Hubble-1.1B-Baseline-BS-8-GAS-8-No-Activation-Checkpointing-H100",
+  "save": "Master_CKPTS/checkpoints-Dummy-BS-1",
   # "load": "checkpoints",
   "checkpoint_validation_with_forward_pass": False,
 
@@ -159,11 +160,7 @@
   "wandb_project": "hubble-speed-testing",
 
 
-  "peak_theoretical_tflops": 989,
-
-  "launcher": "slurm",
-  "deepspeed_slurm": true,
-  "no_ssh_check": true,
+  "peak_theoretical_tflops": 312,
 
   
 }

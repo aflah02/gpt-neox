@@ -1,0 +1,7 @@
+# ninja log v5
+13	37873	1739008881001294302	scaled_upper_triang_masked_softmax.o	66f8f5dc810058fa
+14	287444	1739009130493009514	scaled_upper_triang_masked_softmax_cuda.cuda.o	42b21eb8ed1e1dc4
+287457	287998	1739009131113028685	scaled_upper_triang_masked_softmax_cuda.so	1f9ae1425815e9ed
+28	37839	1739009169166208797	fused_rotary_positional_embedding.o	9abb2b9dec9c42d6
+29	280735	1739009411997751974	fused_rotary_positional_embedding_cuda.cuda.o	13ca8b28ced77637
+280741	281193	1739009412509767877	fused_rotary_positional_embedding.so	39217e02996bb3aa

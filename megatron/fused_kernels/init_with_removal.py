@@ -123,13 +123,13 @@ def load(neox_args=None):
         extra_include_paths,
     )
     # Masked softmax.
-    sources = [
-        srcpath / "scaled_masked_softmax.cpp",
-        srcpath / "scaled_masked_softmax_cuda.cu",
-    ]
-    scaled_masked_softmax_cuda = _cpp_extention_load_helper(
-        "scaled_masked_softmax_cuda", sources, extra_cuda_flags, extra_include_paths
-    )
+    # sources = [
+    #     srcpath / "scaled_masked_softmax.cpp",
+    #     srcpath / "scaled_masked_softmax_cuda.cu",
+    # ]
+    # scaled_masked_softmax_cuda = _cpp_extention_load_helper(
+    #     "scaled_masked_softmax_cuda", sources, extra_cuda_flags, extra_include_paths
+    # )
     # fused rope
     sources = [
         srcpath / "fused_rotary_positional_embedding.cpp",
@@ -163,7 +163,23 @@ def _create_build_dir(buildpath):
         if not os.path.isdir(buildpath):
             print(f"Creation of the build directory {buildpath} failed")
 
+
 def load_fused_kernels():
+    try:
+        import scaled_upper_triang_masked_softmax_cuda
+        import fused_rotary_positional_embedding
+    except (ImportError, ModuleNotFoundError) as e:
+        print("\n")
+        print(e)
+        print("=" * 100)
+        print(
+            f"ERROR: Fused kernels configured but not properly installed. Please run `from megatron.fused_kernels import load()` then `load()` to load them correctly"
+        )
+        print("=" * 100)
+        exit()
+    return
+
+def load_fused_kernels_og():
     try:
         import scaled_upper_triang_masked_softmax_cuda
         import scaled_masked_softmax_cuda

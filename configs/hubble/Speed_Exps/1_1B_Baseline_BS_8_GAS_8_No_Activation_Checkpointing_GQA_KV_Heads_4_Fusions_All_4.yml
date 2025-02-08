@@ -10,6 +10,7 @@
    "num_layers": 22,
    "hidden_size": 2048,
    "num_attention_heads": 32,
+            "num_kv_heads": 4, 
    "intermediate_size": 16896,
    "seq_length": 2048,
    "max_position_embeddings": 2048,
@@ -19,7 +20,7 @@
    "output_layer_parallelism": "column",
     "norm": "rmsnorm",
     "rms_norm_epsilon": 1.0e-5,
-
+    "rmsnorm_fusion": true,
   #  "num_layers": 24,
   #  "hidden_size": 2048,
   #  "num_attention_heads": 16,
@@ -32,9 +33,10 @@
   #  "output_layer_parallelism": "column",
     
    # these should provide some speedup but takes a while to build, set to true if desired
-   "scaled_upper_triang_masked_softmax_fusion": false,
+   "scaled_upper_triang_masked_softmax_fusion": true,
+   "scaled_masked_softmax_fusion": true,
    "bias_gelu_fusion": false,
-  #  "rope_fusion": false,
+   "rope_fusion": true,
   #  "layernorm_fusion": false,
    "use_bias_in_norms": false,
    "use_bias_in_attn_linear": false,
@@ -116,11 +118,11 @@
    "keep_last_n_checkpoints": 4,
    "wall_clock_breakdown": true,
 
-  "wandb_run_name": "Hubble-1.1B-Baseline-BS-8-GAS-8-No-Activation-Checkpointing-H100",
+  "wandb_run_name": "Hubble-1.1B-Baseline-BS-8-GAS-8-No-Activation-Checkpointing-A100-GQA-KV-Heads-4-Fusions-All-4",
 
   
    "memory_profiling": true,
-   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-1.1B-Baseline-BS-8-GAS-8-No-Activation-Checkpointing-H100",
+   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-1.1B-Baseline-BS-8-GAS-8-No-Activation-Checkpointing-A100-GQA-KV-Heads-4-Fusions-All-4",
    "profile_step_start": 0,
    "profile_step_stop": 100,
 
@@ -148,7 +150,7 @@
 
   "vocab_file": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/olmo_tokenizer.json",
   "tokenizer_type": "HFTokenizer",
-  "save": "Master_CKPTS/checkpoints-Hubble-1.1B-Baseline-BS-8-GAS-8-No-Activation-Checkpointing-H100",
+  "save": "Master_CKPTS/checkpoints-Hubble-1.1B-Baseline-BS-8-GAS-8-No-Activation-Checkpointing-A100-GQA-KV-Heads-4-Fusions-All-4",
   # "load": "checkpoints",
   "checkpoint_validation_with_forward_pass": False,
 
@@ -159,7 +161,7 @@
   "wandb_project": "hubble-speed-testing",
 
 
-  "peak_theoretical_tflops": 989,
+  "peak_theoretical_tflops": 312,
 
   "launcher": "slurm",
   "deepspeed_slurm": true,
