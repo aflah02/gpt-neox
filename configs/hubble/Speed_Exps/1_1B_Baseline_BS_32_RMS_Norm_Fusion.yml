@@ -162,9 +162,9 @@
 
   "peak_theoretical_tflops": 312,
 
-  # "launcher": "slurm",
-  # "deepspeed_slurm": true,
-  # "no_ssh_check": true,
+  "launcher": "slurm",
+  "deepspeed_slurm": true,
+  "no_ssh_check": true,
 
   
 }

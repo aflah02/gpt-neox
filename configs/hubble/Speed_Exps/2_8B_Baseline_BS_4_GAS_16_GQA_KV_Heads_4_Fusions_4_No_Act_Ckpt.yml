@@ -25,6 +25,7 @@
     
    # these should provide some speedup but takes a while to build, set to true if desired
    "scaled_upper_triang_masked_softmax_fusion": true,
+      "scaled_masked_softmax_fusion": true,
    "bias_gelu_fusion": false,
    "rope_fusion": true,
   #  "layernorm_fusion": false,
@@ -108,11 +109,11 @@
    "keep_last_n_checkpoints": 4,
    "wall_clock_breakdown": true,
 
-  "wandb_run_name": "Hubble-2.8B-Baseline-BS-4-GAS-16-GQA-KV-Heads-4-Fusions-3-No-Act-Ckpt",
+  "wandb_run_name": "Hubble-2.8B-Baseline-BS-4-GAS-16-GQA-KV-Heads-4-Fusions-4-No-Act-Ckpt",
 
   
    "memory_profiling": true,
-   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-2.8B-Baseline-BS-4-GAS-16-GQA-KV-Heads-4-Fusions-3-No-Act-Ckpt",
+   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-2.8B-Baseline-BS-4-GAS-16-GQA-KV-Heads-4-Fusions-4-No-Act-Ckpt",
    "profile_step_start": 0,
    "profile_step_stop": 100,
 
@@ -140,7 +141,7 @@
 
   "vocab_file": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/olmo_tokenizer.json",
   "tokenizer_type": "HFTokenizer",
-  "save": "Master_CKPTS/checkpoints-Hubble-2.8B-Baseline-BS-4-GAS-16-GQA-KV-Heads-4-Fusions-3-No-Act-Ckpt",
+  "save": "Master_CKPTS/checkpoints-Hubble-2.8B-Baseline-BS-4-GAS-16-GQA-KV-Heads-4-Fusions-4-No-Act-Ckpt",
   # "load": "checkpoints",
   "checkpoint_validation_with_forward_pass": False,
 

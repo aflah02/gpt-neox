@@ -11,7 +11,7 @@
 #SBATCH --mem=0
 
 # Activate Env
-source /NS/venvs/work/afkhan/neoxolmo/bin/activate
+source /NS/venvs/work/afkhan/neox_updated_env/bin/activate
 
 # Some potentially useful distributed environment variables
 export HOSTNAMES=`scontrol show hostnames "$SLURM_JOB_NODELIST"`

@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name="hubble_6_7B_Baseline_No_Activation_Checkpointing_BS_4_GAS_16_GQA_KV_Heads_4_Fusions_3"
+#SBATCH --job-name="hubble_2_8B_Baseline_BS_4_GAS_16_GQA_KV_Heads_4_Fusions_4_No_Act_Ckpt_FA_Swiglu_"
 #SBATCH --partition=a100
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=8
 #SBATCH --gres=gpu:8
-#SBATCH -o /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Logs/hubble_6_7B_Baseline_No_Activation_Checkpointing_BS_4_GAS_16_GQA_KV_Heads_4_Fusions_3_%j_%A-%T.out
-#SBATCH -e /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Logs/hubble_6_7B_Baseline_No_Activation_Checkpointing_BS_4_GAS_16_GQA_KV_Heads_4_Fusions_3_%j_%A-%T.err
+#SBATCH -o /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Logs/hubble_2_8B_Baseline_BS_4_GAS_16_GQA_KV_Heads_4_Fusions_4_No_Act_Ckpt_FA_Swiglu_%x_%j_%A-%T.out
+#SBATCH -e /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Logs/hubble_2_8B_Baseline_BS_4_GAS_16_GQA_KV_Heads_4_Fusions_4_No_Act_Ckpt_FA_Swiglu_%x_%j_%A-%T.err
 #SBATCH --time=1:00:00
 #SBATCH --exclusive
 #SBATCH --mem=0
@@ -39,4 +39,4 @@ echo "Hostfile created."
 export DLTS_HOSTFILE=/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/SLURM_Configs/Hostfiles/hosts_$SLURM_JOBID
 
 # Change DIRECTORY to your gpt-neox clone
-cd /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox && python ./deepy.py train.py ./configs/hubble/Speed_Exps/6_7B_Baseline_No_Activation_Checkpointing_BS_4_GAS_16_GQA_KV_Heads_4_Fusions_3.yml
+cd /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox && python ./deepy.py train.py ./configs/hubble/Speed_Exps/2_8B_Baseline_BS_4_GAS_16_GQA_KV_Heads_4_Fusions_4_No_Act_Ckpt_FA_Swiglu.yml

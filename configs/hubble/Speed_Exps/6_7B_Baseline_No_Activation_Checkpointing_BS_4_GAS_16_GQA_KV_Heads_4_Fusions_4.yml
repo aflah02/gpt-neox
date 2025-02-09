@@ -1,21 +1,21 @@
-# Hubble 2.8B
 {
    # parallelism settings ( you will want to change these based on your cluster setup, ideally scheduling pipeline stages
    # across the node boundaries )
    "pipe_parallel_size": 1,
-   "model_parallel_size": 1,
-  "make_vocab_size_divisible_by": 128, # Need to set as 64 because code makes it divisible by MP*makes_vocab_size_divisible_by
+   "model_parallel_size": 2,
+  "make_vocab_size_divisible_by": 64, # Need to set as 64 because code makes it divisible by MP*makes_vocab_size_divisible_by
 
    # model settings
    "num_layers": 32,
-   "hidden_size": 2560,
+   "hidden_size": 4096,
+    "intermediate_size": 32768,
+    # "intermediate_size": 32768, 11008*3
    "num_attention_heads": 32,
       "num_kv_heads": 4, 
-  #  "intermediate_size": 30720, # 10240*3 (Same as Pythia) 
-  "intermediate_size": 24576, # 8192*3 (Same as Phi)
    "seq_length": 2048,
    "max_position_embeddings": 2048,
    "pos_emb": "rotary",
+  "rotary_pct": 1,
    "no_weight_tying": true,
    "gpt_j_residual": false,
    "output_layer_parallelism": "column",
@@ -25,6 +25,7 @@
     
    # these should provide some speedup but takes a while to build, set to true if desired
    "scaled_upper_triang_masked_softmax_fusion": true,
+      "scaled_masked_softmax_fusion": true,
    "bias_gelu_fusion": false,
    "rope_fusion": true,
   #  "layernorm_fusion": false,
@@ -48,7 +49,7 @@
      }
    },
 
-   # for all zero_optimization options, see https://www.deepspeed.ai/docs/config-json/#zero-optimizations-for-fp16-training
+   # for all zero_optimization options, see https://www.deepspeed.ai/docs/config-json/#zero-optimizations-for-fp24-training
   "zero_optimization": {
   "stage": 1,
   "allgather_partitions": true,
@@ -79,7 +80,6 @@
    "attention_dropout": 0,
    # Flash Attention
    "attention_config": [[["flash"], 32]],
-      # "attention_config": [[["flash"], 24]],
 
    # precision settings
   "precision": "bfloat16",
@@ -92,8 +92,8 @@
   },
 
    # misc. training settings
-   "train_iters": 500,
-   "lr_decay_iters": 500,
+   "train_iters": 1000,
+   "lr_decay_iters": 1000,
    "distributed_backend": "nccl",
    "lr_decay_style": "cosine",
    "warmup": 0.01,
@@ -108,11 +108,11 @@
    "keep_last_n_checkpoints": 4,
    "wall_clock_breakdown": true,
 
-  "wandb_run_name": "Hubble-2.8B-Baseline-BS-4-GAS-16-GQA-KV-Heads-4-Fusions-3-No-Act-Ckpt",
+     "wandb_run_name": "Hubble-6.7B-Baseline-No-Activation-Checkpointing-BS-4-GAS-16-GQA-KV-Heads-4-Fusions-4",
 
   
    "memory_profiling": true,
-   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-2.8B-Baseline-BS-4-GAS-16-GQA-KV-Heads-4-Fusions-3-No-Act-Ckpt",
+   "memory_profiling_path": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Profiles/Hubble-6.7B-Baseline-No-Activation-Checkpointing-BS-4-GAS-16-GQA-KV-Heads-4-Fusions-4",
    "profile_step_start": 0,
    "profile_step_stop": 100,
 
@@ -140,7 +140,7 @@
 
   "vocab_file": "/NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/olmo_tokenizer.json",
   "tokenizer_type": "HFTokenizer",
-  "save": "Master_CKPTS/checkpoints-Hubble-2.8B-Baseline-BS-4-GAS-16-GQA-KV-Heads-4-Fusions-3-No-Act-Ckpt",
+  "save": "Master_CKPTS/checkpoints-Hubble-6.7B-Baseline-No-Activation-Checkpointing-BS-4-GAS-16-GQA-KV-Heads-4-Fusions-4",
   # "load": "checkpoints",
   "checkpoint_validation_with_forward_pass": False,
 
