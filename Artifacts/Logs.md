@@ -45,3 +45,26 @@ NeoX Setup Logs
 - Export command 1.1B GQA - `python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Master_CKPTS/checkpoints-Hubble-1.1B-Baseline-BS-8-GAS-8-No-Activation-Checkpointing-A100-GQA-KV-Heads-4-All-Fusion/global_step1 --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Master_CKPTS/checkpoints-Hubble-1.1B-Baseline-BS-8-GAS-8-No-Activation-Checkpointing-A100-GQA-KV-Heads-4-All-Fusion/global_step1/configs/1_1B_Baseline_BS_8_GAS_8_No_Activation_Checkpointing_GQA_KV_Heads_4_All_Fusion_Export.yml --output_dir Artifacts/Exported_HF_Model/1_1B_Baseline_BS_8_GAS_8_No_Activation_Checkpointing_GQA_KV_Heads_4_All_Fusion_Export/ --precision auto --architecture llama`
 - Export command 6.7B GQA - `python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Master_CKPTS/checkpoints-Hubble-6.7B-Baseline-No-Activation-Checkpointing-BS-4-GAS-16-GQA-KV-Heads-4-Both-Fusion/global_step1000 --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Master_CKPTS/checkpoints-Hubble-6.7B-Baseline-No-Activation-Checkpointing-BS-4-GAS-16-GQA-KV-Heads-4-Both-Fusion/global_step1000/configs/6_7B_Baseline_No_Activation_Checkpointing_BS_4_GAS_16_GQA_KV_Heads_4_Both_Fusion_Export.yml --output_dir Artifacts/Exported_HF_Model/6_7B_Baseline_No_Activation_Checkpointing_BS_4_GAS_16_GQA_KV_Heads_4_Both_Fusion_Export_Step_1000/ --precision auto --architecture llama`
 - If stuff hangs delete /home/afkhan/.cache/torch_extensions or torch_extensions build dir
+
+Ryan's Steps - 
+
+conda create -p hubble2 python=3.10
+conda install pytorch==2.0.0 torchvision==0.15.0 torchaudio==2.0.0 pytorch-cuda=11.8 -c pytorch -c nvidia
+pip install -r requirements/requirements.txt
+pip install triton=2.0.0
+pip install -r requirements/requirements-wandb.txt
+pip install -r ./requirements/requirements-flashattention.txt
+
+CUDA 12.1 ENV - 
+
+cuda_version=12.1
+export PATH=/usr/lib/cuda-${cuda_version}/bin/:${PATH}
+export LD_LIBRARY_PATH=/usr/lib/cuda-${cuda_version}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}
+export CUDA_PATH=/usr/lib/cuda-${cuda_version}/
+- pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121 
+- Above command borrowed from https://pytorch.org/get-started/previous-versions/#linux-and-windows-1
+- pip install -r requirements/requirements.txt
+- pip install -r requirements/requirements-wandb.txt
+- pip install -r ./requirements/requirements-flashattention.txt
+- pip install -r ./requirements/requirements-transformerengine.txt
+
