@@ -158,3 +158,6 @@ Artifacts/Profiles/
 # test data files
 tests/data/*.bin
 tests/data/*.idx
+Artifacts/Testing_Checkpoint_Export/*
+Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa
+Artifacts/Testing_Checkpoint_Export/1B_20B_perturbed_nogqa

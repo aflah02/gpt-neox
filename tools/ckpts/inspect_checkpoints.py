@@ -55,7 +55,11 @@ def sizeof_fmt(num, suffix="B"):
 
 def pretty_print(contents: dict):
     """Prints a nice summary of the top-level contents in a checkpoint dictionary."""
-    col_size = max(len(str(k)) for k in contents)
+    try:
+        col_size = max(len(str(k)) for k in contents)
+    except Exception as e:
+        print(f"Error: {e}")
+        col_size = 100
     for k, v in sorted(contents.items()):
         key_length = len(str(k))
         line = " " * (col_size - key_length)
@@ -295,7 +299,7 @@ def compare(args: Namespace):
 def main():
     parser = ArgumentParser()
     parser.add_argument(
-        "dir",
+        "--dir",
         type=str,
         help="The checkpoint dir to inspect. Must be either: \
          - a directory containing pickle binaries saved with 'torch.save' ending in .pt or .ckpt \

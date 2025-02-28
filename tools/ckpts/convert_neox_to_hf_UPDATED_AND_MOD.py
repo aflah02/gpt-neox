@@ -368,107 +368,151 @@ def create_config(neox_config, architecture="neox", is_rm=False, pad_token_id=-1
     return hf_config
 
 
+# def reshard_and_split_qkv(
+#     param_mapping: dict,  # a dictionary mapping the QKV weight keys in GPT-NeoX -> a list of keys representing the Q, K, and V weight keys the HF model will use
+#     hf_config: AutoConfig,  # a HF model config for the model
+#     loaded_tp_ranks: List[torch.Tensor],
+#     layer_idx: int,
+#     sequential: bool,
+# ):
+#     """
+#     A helper function which performs reshaping and sharding to make the QKV projection from NeoX compatible with HF Llama models,
+#     even when grouped-query attention is required.
+#     """
+#     for key, hf_keys in param_mapping.items():
+#         assert (
+#             isinstance(hf_keys, list) and len(hf_keys) == 3
+#         ), "Must map QKV to precisely 3 resulting weight matrices."
+
+#     for key, hf_keys in param_mapping.items():
+#         # we first merge the QKV proj. across TP ranks
+#         sharded_qkv = torch.stack(
+#             get_state(loaded_tp_ranks, key, layer_idx, sequential), dim=0
+#         )
+#         # should now have shape [TP_SIZE, (hidden_size + 2 * kv_hidden_size) / TP_SIZE, hidden_size].
+#         print(f"Sharded QKV shape: {sharded_qkv.shape} | Should be [TP_SIZE, (hidden_size + 2 * kv_hidden_size) / TP_SIZE, hidden_size]")
+
+#         sharded_qkv = sharded_qkv.view(
+#             len(loaded_tp_ranks),
+#             hf_config.num_attention_heads // len(loaded_tp_ranks),
+#             int(
+#                 hf_config.hidden_size
+#                 // hf_config.num_attention_heads
+#                 * (
+#                     1
+#                     + 2 * hf_config.num_key_value_heads / hf_config.num_attention_heads
+#                 )
+#             ),
+#             hf_config.hidden_size,
+#         )  # is meant to convert to shape [TP_SIZE, NUM_QUERY_HEADS_PER_SHARD, dims_per_head * (1 + 2 * kv-to-q head ratio), hidden_size]
+#         print(f"Reshaped QKV shape: {sharded_qkv.shape} | Should be [TP_SIZE, NUM_Q_HEADS_PER_SHARD, dims_per_head * (1 + 2 * kv-to-q head ratio), hidden_size]")
+
+#         q, k, v = torch.split(
+#             sharded_qkv,
+#             [
+#                 hf_config.hidden_size // hf_config.num_attention_heads,
+#                 int(
+#                     (hf_config.num_key_value_heads / hf_config.num_attention_heads)
+#                     * hf_config.hidden_size
+#                     // hf_config.num_attention_heads
+#                 ),
+#                 int(
+#                     (hf_config.num_key_value_heads / hf_config.num_attention_heads)
+#                     * hf_config.hidden_size
+#                     // hf_config.num_attention_heads
+#                 ),
+#             ],
+#             dim=2,
+#         )
+#         # splits along the (dims_per_head * (1 + 2 * kv-to-q head ratio)_ dim to get 3 tensors:
+#         # 1 x [TP_SIZE, NUM_Q_HEADS_PER_SHARD, dims_per_head, hidden_size] and 2 x [TP_SIZE, NUM_Q_HEADS_PER_SHARD, (dims_per_head / kv-to-q head ratio), hidden_size]
+#         # these are the Q, and K, V tensors respectively.
+
+#         print(f"dims_per_head: {hf_config.hidden_size // hf_config.num_attention_heads}")
+#         print(f"kv-to-q head ratio: {hf_config.num_key_value_heads / hf_config.num_attention_heads}")
+
+#         print(f"Split Q shape: {q.shape} | Should be [TP_SIZE, NUM_Q_HEADS_PER_SHARD, dims_per_head, hidden_size]")
+#         print(f"Split K shape: {k.shape} | Should be [TP_SIZE, NUM_Q_HEADS_PER_SHARD, (dims_per_head / kv-to-q head ratio), hidden_size]")
+#         print(f"Split V shape: {v.shape} | Should be [TP_SIZE, NUM_Q_HEADS_PER_SHARD, (dims_per_head / kv-to-q head ratio), hidden_size]")
+
+#         # we have to do additional reshape for each individual tensor now,
+#         # into the expected square (or smaller than square, for K/V tensors) shape
+#         q, k, v = q.squeeze(dim=2), k.squeeze(dim=2), v.squeeze(dim=2)
+#         q = q.view(
+#             hf_config.num_attention_heads,
+#             hf_config.hidden_size // hf_config.num_attention_heads,
+#             hf_config.hidden_size,
+#         ).reshape(hf_config.hidden_size, hf_config.hidden_size)
+#         k = k.reshape(
+#             hf_config.num_key_value_heads,
+#             hf_config.hidden_size // hf_config.num_attention_heads,
+#             hf_config.hidden_size,
+#         ).reshape(
+#             hf_config.hidden_size
+#             // hf_config.num_attention_heads
+#             * hf_config.num_key_value_heads,
+#             hf_config.hidden_size,
+#         )
+#         v = v.reshape(
+#             hf_config.num_key_value_heads,
+#             hf_config.hidden_size // hf_config.num_attention_heads,
+#             hf_config.hidden_size,
+#         ).reshape(
+#             hf_config.hidden_size
+#             // hf_config.num_attention_heads
+#             * hf_config.num_key_value_heads,
+#             hf_config.hidden_size,
+#         )
+
+#         # return these
+#         state_dict = {}
+#         for hf_key, proj in zip(hf_keys, [q, k, v]):
+#             state_dict[hf_key] = proj.clone()
+#         return state_dict
+
 def reshard_and_split_qkv(
-    param_mapping: dict,  # a dictionary mapping the QKV weight keys in GPT-NeoX -> a list of keys representing the Q, K, and V weight keys the HF model will use
-    hf_config: AutoConfig,  # a HF model config for the model
+    param_mapping: dict,  # Mapping of QKV weight keys from NeoX -> HF model
+    hf_config: AutoConfig,  # HF model config
     loaded_tp_ranks: List[torch.Tensor],
     layer_idx: int,
     sequential: bool,
 ):
     """
-    A helper function which performs reshaping and sharding to make the QKV projection from NeoX compatible with HF Llama models,
-    even when grouped-query attention is required.
+    Corrected reshaping and splitting of QKV projections to align with HF Llama.
     """
     for key, hf_keys in param_mapping.items():
-        assert (
-            isinstance(hf_keys, list) and len(hf_keys) == 3
-        ), "Must map QKV to precisely 3 resulting weight matrices."
+        assert isinstance(hf_keys, list) and len(hf_keys) == 3, "Must map QKV to precisely 3 weight matrices."
 
     for key, hf_keys in param_mapping.items():
-        # we first merge the QKV proj. across TP ranks
-        sharded_qkv = torch.stack(
+        # Merge across TP ranks (concatenation)
+        sharded_qkv = torch.cat(
             get_state(loaded_tp_ranks, key, layer_idx, sequential), dim=0
-        )
-        # should now have shape [TP_SIZE, (hidden_size + 2 * kv_hidden_size) / TP_SIZE, hidden_size].
-        print(f"Sharded QKV shape: {sharded_qkv.shape} | Should be [TP_SIZE, (hidden_size + 2 * kv_hidden_size) / TP_SIZE, hidden_size]")
+        )  # Shape: [(hidden_size + 2 * kv_hidden_size), hidden_size]
 
-        sharded_qkv = sharded_qkv.view(
-            len(loaded_tp_ranks),
-            hf_config.num_attention_heads // len(loaded_tp_ranks),
-            int(
-                hf_config.hidden_size
-                // hf_config.num_attention_heads
-                * (
-                    1
-                    + 2 * hf_config.num_key_value_heads / hf_config.num_attention_heads
-                )
-            ),
-            hf_config.hidden_size,
-        )  # is meant to convert to shape [TP_SIZE, NUM_QUERY_HEADS_PER_SHARD, dims_per_head * (1 + 2 * kv-to-q head ratio), hidden_size]
-        print(f"Reshaped QKV shape: {sharded_qkv.shape} | Should be [TP_SIZE, NUM_Q_HEADS_PER_SHARD, dims_per_head * (1 + 2 * kv-to-q head ratio), hidden_size]")
+        # Number of heads
+        num_q_heads = hf_config.num_attention_heads
+        num_kv_heads = hf_config.num_key_value_heads
+        head_dim = hf_config.hidden_size // num_q_heads
 
+        # Split QKV properly
         q, k, v = torch.split(
             sharded_qkv,
-            [
-                hf_config.hidden_size // hf_config.num_attention_heads,
-                int(
-                    (hf_config.num_key_value_heads / hf_config.num_attention_heads)
-                    * hf_config.hidden_size
-                    // hf_config.num_attention_heads
-                ),
-                int(
-                    (hf_config.num_key_value_heads / hf_config.num_attention_heads)
-                    * hf_config.hidden_size
-                    // hf_config.num_attention_heads
-                ),
-            ],
-            dim=2,
-        )
-        # splits along the (dims_per_head * (1 + 2 * kv-to-q head ratio)_ dim to get 3 tensors:
-        # 1 x [TP_SIZE, NUM_Q_HEADS_PER_SHARD, dims_per_head, hidden_size] and 2 x [TP_SIZE, NUM_Q_HEADS_PER_SHARD, (dims_per_head / kv-to-q head ratio), hidden_size]
-        # these are the Q, and K, V tensors respectively.
-
-        print(f"dims_per_head: {hf_config.hidden_size // hf_config.num_attention_heads}")
-        print(f"kv-to-q head ratio: {hf_config.num_key_value_heads / hf_config.num_attention_heads}")
-
-        print(f"Split Q shape: {q.shape} | Should be [TP_SIZE, NUM_Q_HEADS_PER_SHARD, dims_per_head, hidden_size]")
-        print(f"Split K shape: {k.shape} | Should be [TP_SIZE, NUM_Q_HEADS_PER_SHARD, (dims_per_head / kv-to-q head ratio), hidden_size]")
-        print(f"Split V shape: {v.shape} | Should be [TP_SIZE, NUM_Q_HEADS_PER_SHARD, (dims_per_head / kv-to-q head ratio), hidden_size]")
-
-        # we have to do additional reshape for each individual tensor now,
-        # into the expected square (or smaller than square, for K/V tensors) shape
-        q, k, v = q.squeeze(dim=2), k.squeeze(dim=2), v.squeeze(dim=2)
-        q = q.view(
-            hf_config.num_attention_heads,
-            hf_config.hidden_size // hf_config.num_attention_heads,
-            hf_config.hidden_size,
-        ).reshape(hf_config.hidden_size, hf_config.hidden_size)
-        k = k.reshape(
-            hf_config.num_key_value_heads,
-            hf_config.hidden_size // hf_config.num_attention_heads,
-            hf_config.hidden_size,
-        ).reshape(
-            hf_config.hidden_size
-            // hf_config.num_attention_heads
-            * hf_config.num_key_value_heads,
-            hf_config.hidden_size,
-        )
-        v = v.reshape(
-            hf_config.num_key_value_heads,
-            hf_config.hidden_size // hf_config.num_attention_heads,
-            hf_config.hidden_size,
-        ).reshape(
-            hf_config.hidden_size
-            // hf_config.num_attention_heads
-            * hf_config.num_key_value_heads,
-            hf_config.hidden_size,
+            [num_q_heads * head_dim, num_kv_heads * head_dim, num_kv_heads * head_dim],
+            dim=0,
         )
 
-        # return these
-        state_dict = {}
-        for hf_key, proj in zip(hf_keys, [q, k, v]):
-            state_dict[hf_key] = proj.clone()
+        # Reshape Q to [hidden_size, hidden_size]
+        q = q.view(num_q_heads, head_dim, hf_config.hidden_size).reshape(hf_config.hidden_size, hf_config.hidden_size)
+
+        # Reshape K/V to [num_key_value_heads * head_dim, hidden_size]
+        k = k.view(num_kv_heads, head_dim, hf_config.hidden_size).reshape(num_kv_heads * head_dim, hf_config.hidden_size)
+        v = v.view(num_kv_heads, head_dim, hf_config.hidden_size).reshape(num_kv_heads * head_dim, hf_config.hidden_size)
+
+        # Store in state_dict
+        state_dict = {hf_key: proj.clone() for hf_key, proj in zip(hf_keys, [q, k, v])}
+
         return state_dict
+
 
 
 def get_mlp_naming_convention(loaded_tp_ranks, layer_idx, sequential):

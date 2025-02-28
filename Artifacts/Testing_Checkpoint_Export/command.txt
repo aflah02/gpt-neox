@@ -1,0 +1,47 @@
+python ./tools/ckpts/convert_neox_to_hf.py --input_dir /path/to/model/global_stepXXX --config_file your_config.yml --output_dir hf_model/save/location --precision {auto,fp16,bf16,fp32} --architecture {neox,mistral,llama}
+
+python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA/ --precision auto --architecture llama
+
+python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA/ --precision auto --architecture llama > Artifacts/GQA_Conversion.log 2>&1
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA_auto/ --precision auto --architecture llama > Artifacts/GQA_Conversion_auto.log 2>&1
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA_bf16/ --precision bf16 --architecture llama > Artifacts/GQA_Conversion_bf16.log 2>&1
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA_fp32/ --precision fp32 --architecture llama > Artifacts/GQA_Conversion_fp32.log 2>&1
+
+Without --vocab-is-hf-tokenizer
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA_auto/ --precision auto --architecture llama > Artifacts/GQA_Conversion_auto.log 2>&1
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA_bf16/ --precision bf16 --architecture llama > Artifacts/GQA_Conversion_bf16.log 2>&1
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA_fp32/ --precision fp32 --architecture llama > Artifacts/GQA_Conversion_fp32.log 2>&1
+
+With --vocab-is-hf-tokenizer
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --vocab-is-hf-tokenizer --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA_auto_viht/ --precision auto --architecture llama > Artifacts/GQA_Conversion_auto_viht.log 2>&1
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --vocab-is-hf-tokenizer --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA_bf16_viht/ --precision bf16 --architecture llama > Artifacts/GQA_Conversion_bf16_viht.log 2>&1
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --vocab-is-hf-tokenizer --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA_fp32_viht/ --precision fp32 --architecture llama > Artifacts/GQA_Conversion_fp32_viht.log 2>&1
+
+# Mod File - 
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/convert_neox_to_hf_UPDATED_AND_MOD.py --vocab-is-hf-tokenizer --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA_auto_viht_mod/ --precision auto --architecture llama > Artifacts/GQA_Conversion_auto_viht_mod.log 2>&1
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/convert_neox_to_hf_UPDATED_AND_MOD.py --vocab-is-hf-tokenizer --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml --output_dir Artifacts/Exported_HF_Model/Ryan_GQA_fp32_viht_mod/ --precision fp32 --architecture llama > Artifacts/Ryan_GQA_fp32_viht_mod.log 2>&1
+
+# NoGQA
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/convert_neox_to_hf_UPDATED.py --vocab-is-hf-tokenizer --input_dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_20B_perturbed_nogqa --config_file /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_20B_perturbed_nogqa/configs/1B_lr-6e-4_tokens-20B_model-perturbed_nogqa.yml --output_dir Artifacts/Exported_HF_Model/Ryan_No_GQA_bf16_viht/ --precision bf16 --architecture llama > Artifacts/No_GQA_Conversion_bf16_viht.log 2>&1
+
+
+
+CUDA_VISIBLE_DEVICES=1 python ./tools/ckpts/inspect_checkpoints.py --dir /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa | sed -r "s/\x1B\[[0-9;]*[mK]//g" > Artifacts/Inspect_GQA_Checkpoint.log 2>&1
+
+# Inference
+
+CUDA_VISIBLE_DEVICES=1 python ./deepy.py generate.py -d configs /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_100B_perturbed_gqa/configs/1B_lr-6e-4_tokens-100B_model-perturbed.yml /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/text_generation.yml
+
+CUDA_VISIBLE_DEVICES=1 python ./deepy.py generate.py -d configs /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/1B_20B_perturbed_nogqa/configs/1B_lr-6e-4_tokens-20B_model-perturbed_nogqa.yml  /NS/llm-pretraining/work/afkhan/USC_Colab/gpt-neox/Artifacts/Testing_Checkpoint_Export/text_generation.yml
