@@ -2,14 +2,18 @@
    "pipe_parallel_size": 1,
    "model_parallel_size": 1,
 
-   "num_layers": 4,
-   "hidden_size": 256,
-   "num_attention_heads": 4,
-   "seq_length": 512,
-   "max_position_embeddings": 512,
+   "num_layers": 8,
+   "hidden_size": 512,
+   "num_attention_heads": 8,
+   "seq_length": 1024,
+   "max_position_embeddings": 1024,
    "norm": "layernorm",
    "pos_emb": "rotary",
-   "pos_emb_config": [["rotary", "alibi"], 2],
+   "pos_emb_config": [
+     [["learned"], 2],
+     [["rotary"], 4],
+     [["alibi"], 2]
+   ],
    "no_weight_tying": true,
    "gpt_j_residual": false,
    "output_layer_parallelism": "column",
@@ -63,24 +67,26 @@
      "min_loss_scale": 1
    },
 
-   "train_iters": 100,
-   "lr_decay_iters": 100,
+   "train_iters": 500,
+   "lr_decay_iters": 500,
    "distributed_backend": "nccl",
    "lr_decay_style": "cosine",
    "warmup": 0.01,
-   "checkpoint_factor": 50,
-   "eval_interval": 50,
-   "eval_iters": 5,
+   "checkpoint_factor": 100,
+   "eval_interval": 100,
+   "eval_iters": 10,
 
    "log_interval": 10,
    "steps_per_print": 5,
    "keep_last_n_checkpoints": 2,
    "wall_clock_breakdown": true,
 
+   "_comment": "Example: Hybrid model with learned (2 layers), rotary (4 layers), alibi (2 layers)",
+
    "hostfile": "/mock_path",
    "data_path": "/mock_path",
-   "vocab_file": "/mock_path",
+   "vocab_file": "/mock_path", 
    "merge_file": "/mock_path",
-   "save": "/tmp/test_save",
-   "load": "/tmp/test_load"
+   "save": "/tmp/hybrid_save",
+   "load": "/tmp/hybrid_load"
 }
