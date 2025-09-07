@@ -35,7 +35,7 @@ except ImportError:
 from deepspeed.launcher.runner import DLTS_HOSTFILE
 from megatron.logging import Tee
 from megatron.tokenizer import build_tokenizer
-from megatron.utils import obtain_resource_pool, expand_attention_types
+from megatron.utils import obtain_resource_pool, expand_attention_types, expand_pos_emb_types
 from .deepspeed_args import NeoXArgsDeepspeedConfig, NeoXArgsDeepspeedRunner
 from .neox_args import (
     NeoXArgsModel,
@@ -1121,6 +1121,23 @@ class NeoXArgs(*BASE_CLASSES):
             assert (
                 self.hidden_dropout == 0.0,
             ), "RWKV does not yet have dropout implemented"
+
+        # Positional embedding config
+        POS_EMB_TYPE_CHOICES = ["learned", "rotary", "sinusoidal", "rpe", "alibi", "none"]
+        if self.pos_emb_config is None:
+            # Default to using global pos_emb for all layers
+            self.update_value("pos_emb_config", [[[self.pos_emb], self.num_layers]])
+        self.update_value(
+            "pos_emb_config",
+            expand_pos_emb_types(self.pos_emb_config, self.num_layers),
+        )
+        assert (
+            len(self.pos_emb_config) == self.num_layers
+        ), "Length of pos_emb_config list must equal num_layers"
+        for item in self.pos_emb_config:
+            assert (
+                item in POS_EMB_TYPE_CHOICES
+            ), f"Positional embedding type {item} not recognized"
 
         # Sparsity config
         if self.sparsity_config is None:

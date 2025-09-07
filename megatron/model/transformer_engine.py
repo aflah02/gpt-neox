@@ -534,6 +534,7 @@ class TEMultiheadAttention(te.pytorch.MultiheadAttention):
         rotary=False,
         use_cache=False,
         parallel_output=False,
+        layer_pos_emb=None,
     ):
 
         self.neox_args = neox_args
@@ -595,7 +596,9 @@ class TEMultiheadAttention(te.pytorch.MultiheadAttention):
             fuse_qkv_params=True,
         )
 
-        if neox_args.pos_emb == "rotary":
+        self.pos_emb = layer_pos_emb if layer_pos_emb is not None else neox_args.pos_emb
+
+        if self.pos_emb == "rotary":
             self.hidden_size_per_attention_head = mpu.divide(
                 neox_args.hidden_size, neox_args.num_attention_heads
             )
