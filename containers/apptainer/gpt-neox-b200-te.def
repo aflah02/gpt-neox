@@ -1,0 +1,75 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pytorch:25.04-py3
+
+%labels
+    org.opencontainers.image.version "2.0"
+    org.opencontainers.image.authors "contact@eleuther.ai"
+    org.opencontainers.image.source "https://www.github.com/eleutherai/gpt-neox"
+    org.opencontainers.image.licenses "Apache-2.0"
+    org.opencontainers.image.base.name "nvcr.io/nvidia/pytorch:25.04-py3"
+
+%files
+    requirements /opt/gpt-neox-build/requirements
+    megatron/fused_kernels /opt/gpt-neox-build/megatron/fused_kernels
+
+%environment
+    export DEBIAN_FRONTEND=noninteractive
+    export PATH=/usr/local/mpi/bin:${PATH}
+    export LD_LIBRARY_PATH=/usr/local/lib:/usr/local/mpi/lib:/usr/local/mpi/lib64:${LD_LIBRARY_PATH}
+    export PDSH_RCMD_TYPE=ssh
+    export TORCH_CUDA_ARCH_LIST=10.0
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    export TORCH_CUDA_ARCH_LIST=10.0
+
+    apt-get update -y
+    apt-get install -y \
+        python3-pip sudo pdsh \
+        htop tmux zstd software-properties-common \
+        nfs-common pdsh cmake htop iftop iotop ssh openssh-server \
+        iputils-ping net-tools git ninja-build build-essential libaio-dev \
+        libcupti-dev libmlx4-1 infiniband-diags ibutils \
+        rdmacm-utils perftest rdma-core
+    update-alternatives --install /usr/bin/python python /usr/bin/python3 1
+    update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
+    python -m pip install gpustat
+
+    mkdir /var/run/sshd
+    sed -i 's@session\s*required\s*pam_loginuid.so@session optional pam_loginuid.so@g' /etc/pam.d/sshd
+    echo 'AuthorizedKeysFile     .ssh/authorized_keys' >> /etc/ssh/sshd_config
+    echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
+    echo "Set disable_coredump false" >> /etc/sudo.conf
+
+    mv /usr/local/mpi/bin/mpirun /usr/local/mpi/bin/mpirun.real
+    echo '#!/bin/bash' > /usr/local/mpi/bin/mpirun
+    echo 'mpirun.real --allow-run-as-root --prefix /usr/local/mpi "$@"' >> /usr/local/mpi/bin/mpirun
+    chmod a+x /usr/local/mpi/bin/mpirun
+
+    useradd --create-home --uid 1200 --shell /bin/bash mchorse_b200
+    usermod -aG sudo mchorse_b200
+    echo "mchorse_b200 ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+    mkdir -p /home/mchorse_b200/.ssh /job
+    echo 'Host *' > /home/mchorse_b200/.ssh/config
+    echo '    StrictHostKeyChecking no' >> /home/mchorse_b200/.ssh/config
+    echo 'export PDSH_RCMD_TYPE=ssh' >> /home/mchorse_b200/.bashrc
+    echo 'export PATH=/home/mchorse_b200/.local/bin:$PATH' >> /home/mchorse_b200/.bashrc
+    echo 'export PATH=/usr/local/mpi/bin:$PATH' >> /home/mchorse_b200/.bashrc
+    echo 'export LD_LIBRARY_PATH=/usr/local/lib:/usr/local/mpi/lib:/usr/local/mpi/lib64:$LD_LIBRARY_PATH' >> /home/mchorse_b200/.bashrc
+
+    cd /opt/gpt-neox-build/requirements
+    sed -i 's/^jinja2==3.1.4$/jinja2==3.1.6/' requirements.txt
+    python -m pip install --no-cache-dir -r requirements.txt
+    python -m pip install --no-cache-dir -r requirements-onebitadam.txt
+    python -m pip install --no-cache-dir wandb==0.16.6
+    python -m pip uninstall -y chardet
+
+    cd /opt/gpt-neox-build/megatron/fused_kernels
+    python setup.py install
+
+    mkdir -p /tmp && chmod 0777 /tmp
+
+%runscript
+    cd /home/mchorse_b200
+    exec /bin/bash "$@"
