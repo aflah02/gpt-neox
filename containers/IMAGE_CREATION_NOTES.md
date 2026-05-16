@@ -2,13 +2,6 @@
 
 This note reflects the current Docker files in `gpt-neox/containers/docker`.
 
-## Current files
-
-- `Dockerfile`: upstream repo Dockerfile
-- `Dockerfile.h100-te`: H100-oriented variant
-- `Dockerfile.b200-te`: B200-oriented variant
-- `docker-compose.yml`: checked-in compose file
-
 ## Important repo detail
 
 Build from the `gpt-neox` repo root, not from `containers/docker`.
