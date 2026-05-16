@@ -556,9 +556,13 @@ class TEMultiheadAttention(te.pytorch.MultiheadAttention):
         if neox_args.norm in ["layernorm", "te_layernorm"]:
             self.eps = 1.0e-5
             self.normalization = "LayerNorm"
-        elif neox_args.norm == ["rmsnorm", "te_rmsnorm"]:
+        elif neox_args.norm in ["rmsnorm", "te_rmsnorm"]:
             self.eps = 1.0e-8
             self.normalization = "RMSNorm"
+        else:
+            raise ValueError(
+                "Only LayerNorm and RMSNorm are supported with TransformerEngine"
+            )
 
         if (
             not neox_args.num_kv_heads
