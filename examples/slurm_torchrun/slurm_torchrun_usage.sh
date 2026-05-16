@@ -13,14 +13,8 @@
 module load python-waterboa apptainer gcc openmpi ...
 
 # --- Set up directories and container image ---
-export SINGULARITY_TMPDIR="/dais/fs/scratch/afkhan/Artifacts/TEMP"
-export CONTAINER_IMAGE=/dais/fs/scratch/afkhan/Artifacts/hubble-gpt-neox_2e3a600.sif
-
-# Only pull once (skip if already pulled)
-if [ ! -f "$CONTAINER_IMAGE" ]; then
-    echo "Container image not found. Pulling..."
-    apptainer pull docker://ghcr.io/ameyagodbole/hubble-gpt-neox:2e3a600
-fi
+export SINGULARITY_TMPDIR="Artifacts/TEMP"
+export CONTAINER_IMAGE=Artifacts/image.sif
 
 # --- Set up distributed environment variables ---
 export HOSTNAMES=$(scontrol show hostnames "$SLURM_JOB_NODELIST")
@@ -53,7 +47,7 @@ srun -l apptainer exec --nv --bind /:/ $CONTAINER_IMAGE \
     export TRITON_CACHE_DIR="/tmp/TRITON_TEMP_$SLURM_JOBID"
     mkdir -p $TRITON_CACHE_DIR
 
-    export OMP_NUM_THREADS=10
+    export OMP_NUM_THREADS=10 # Might not be needed/might need adjustment based on your CPU setup
 
     # Map Slurm variables to standard distributed training variables
     export RANK=$SLURM_PROCID

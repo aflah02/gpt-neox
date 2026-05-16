@@ -16,7 +16,7 @@ Build from the `gpt-neox` repo root, not from `containers/docker`.
 The Dockerfiles copy `requirements/*` and `megatron/fused_kernels/`, so the build context must be the repo root:
 
 ```bash
-cd /NS/llm-pretraining/work/afkhan/GPT-NeoX-Dev/TorchRun_Support/gpt-neox
+cd gpt-neox
 ```
 
 ## H100 image
