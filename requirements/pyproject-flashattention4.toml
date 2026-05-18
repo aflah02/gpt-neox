@@ -1,0 +1,14 @@
+[tool.poetry]
+name = "gpt-neox-flashattention4"
+version = "0.1.0"
+description = "Flash Attention 4 requirements for GPT-NeoX"
+authors = ["EleutherAI <contact@eleuther.ai>"]
+license = "Apache-2.0"
+
+[tool.poetry.dependencies]
+python = "^3.10"
+flash-attn-4 = {version = "4.0.0b13", extras = ["cu13"]}
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"

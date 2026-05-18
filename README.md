@@ -135,6 +135,8 @@ This will automatically adapts building process over different GPU vendors (AMD,
 
 To use [Flash-Attention](https://github.com/HazyResearch/flash-attention), install the additional dependencies in  `./requirements/requirements-flashattention.txt` or use a PyTorch NGC container with it pre-installed (note that functionality is not guaranteed using versions different from our requirements file). Then set the attention type in your configuration accordingly (see [configs](./configs/)). This can provide significant speed-ups over regular attention on certain GPU architectures, including Ampere GPUs (such as A100s); see the repository for more details.
 
+FlashAttention-4 can be selected with the same `"flash"` attention type by installing `./requirements/requirements-flashattention4.txt` and setting `"flash_attention_backend": "flash_attn_4"`. This backend uses the `flash-attn-4` CuTeDSL package, requires Python 3.10 or newer, and is currently guarded to configurations with `attention_dropout: 0` and non-AliBi positional embeddings.
+
 ### Transformer Engine
 
 To use [Transformer Engine (TE)](https://github.com/NVIDIA/TransformerEngine), install the additional dependencies in  `./requirements/requirements-transformer-engine.txt` or use a PyTorch NGC container with it pre-installed (note that functionality is not guaranteed using versions different from our requirements file). See [this config](https://github.com/EleutherAI/gpt-neox/blob/main/configs/1-3B-transformer-engine.yml) for an example of using TE on a 1.3B model. This can provide significant speed-ups over regular attention on certain GPU architectures, including Ampere and Hopper GPUs; see the repository for more details.

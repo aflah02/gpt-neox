@@ -22,7 +22,7 @@ import copy
 import torch
 import argparse
 from pkg_resources import packaging
-from importlib.metadata import version
+from importlib.metadata import PackageNotFoundError, version
 
 from dataclasses import dataclass
 from typing import List, Dict
@@ -1148,16 +1148,39 @@ class NeoXArgs(*BASE_CLASSES):
                 ), "Number of KV heads must be at least model_parallel_size for now!"
         # Flash attention version >=2.3.0 required to combine Flash + Sliding Window Attention
         if "flash" in self.attention_config:
-            _flash_version = packaging.version.Version(version("flash-attn"))
-            if self.sliding_window_width is not None:
-                assert _flash_version >= packaging.version.Version(
-                    "2.3.0"
-                ), f"Flash-Attention version ({str(_flash_version)}) must be >= 2.3.0 to support sliding window attention."
-            if self.pos_emb == "alibi":
-                if not _flash_version >= packaging.version.Version("2.4.0.post1"):
-                    print(
-                        f"Warning: Flash-Attention version ({str(_flash_version)}) must be >= 2.4.0.post1 to support AliBi. Falling back to flash-attn triton backend, but version 2.4.0.post1 or later will be required in future."
-                    )
+            if self.flash_attention_backend == "flash_attn_4":
+                try:
+                    version("flash-attn-4")
+                except PackageNotFoundError as exc:
+                    raise ValueError(
+                        "Flash Attention backend flash_attn_4 requires the "
+                        "flash-attn-4 package. Install "
+                        "requirements/requirements-flashattention4.txt."
+                    ) from exc
+                assert (
+                    self.attention_dropout == 0
+                ), "flash_attn_4 does not currently support attention dropout."
+                assert (
+                    self.pos_emb != "alibi"
+                ), "flash_attn_4 integration does not currently support AliBi."
+            else:
+                try:
+                    _flash_version = packaging.version.Version(version("flash-attn"))
+                except PackageNotFoundError as exc:
+                    raise ValueError(
+                        "Flash Attention backend flash_attn_2 requires the "
+                        "flash-attn package. Install "
+                        "requirements/requirements-flashattention.txt."
+                    ) from exc
+                if self.sliding_window_width is not None:
+                    assert _flash_version >= packaging.version.Version(
+                        "2.3.0"
+                    ), f"Flash-Attention version ({str(_flash_version)}) must be >= 2.3.0 to support sliding window attention."
+                if self.pos_emb == "alibi":
+                    if not _flash_version >= packaging.version.Version("2.4.0.post1"):
+                        print(
+                            f"Warning: Flash-Attention version ({str(_flash_version)}) must be >= 2.4.0.post1 to support AliBi. Falling back to flash-attn triton backend, but version 2.4.0.post1 or later will be required in future."
+                        )
 
         # Adding equal dataset weights if none are provided
         if self.train_data_paths and (self.train_data_weights is None):

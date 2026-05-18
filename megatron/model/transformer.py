@@ -405,8 +405,14 @@ class ParallelSelfAttention(nn.Module):
         self.rope_fusion = neox_args.rope_fusion
         self.attention_type = neox_args.attention_config[layer_number]
         self.use_flash_attention = self.attention_type == "flash"
+        self.flash_attention_backend = neox_args.flash_attention_backend
+        self.use_flash_attention_4 = (
+            self.use_flash_attention
+            and self.flash_attention_backend == "flash_attn_4"
+        )
         self.use_triton = (
             self.use_flash_attention
+            and not self.use_flash_attention_4
             and self.pos_emb == "alibi"
             and (
                 not packaging.version.Version(version("flash-attn"))
@@ -427,21 +433,27 @@ class ParallelSelfAttention(nn.Module):
             )
         else:
             if self.use_flash_attention:
-                # we now use Flash Attention 2's provided interface.
-                # TODO: we no longer need to use flash_triton_fn since flash cuda supports alibi.
-                # consider adding OpenAI's more recent Flash-2 Triton kernel in future
-                # from https://github.com/openai/triton/blob/main/python/tutorials/06-fused-attention.py
-                from flash_attn.flash_attn_interface import (
-                    flash_attn_func,
-                    flash_attn_varlen_func,
-                )
-                from flash_attn.flash_attn_triton import (
-                    flash_attn_func as flash_attn_unpadded_unpacked_func_triton,
-                )
+                if self.use_flash_attention_4:
+                    from flash_attn.cute import flash_attn_func, flash_attn_varlen_func
 
-                self.flash_triton_fn = flash_attn_unpadded_unpacked_func_triton
-                self.flash_qkv_fn = flash_attn_func
-                self.flash_varlen_qkv_fn = flash_attn_varlen_func
+                    self.flash_qkv_fn = flash_attn_func
+                    self.flash_varlen_qkv_fn = flash_attn_varlen_func
+                else:
+                    # we now use Flash Attention 2's provided interface.
+                    # TODO: we no longer need to use flash_triton_fn since flash cuda supports alibi.
+                    # consider adding OpenAI's more recent Flash-2 Triton kernel in future
+                    # from https://github.com/openai/triton/blob/main/python/tutorials/06-fused-attention.py
+                    from flash_attn.flash_attn_interface import (
+                        flash_attn_func,
+                        flash_attn_varlen_func,
+                    )
+                    from flash_attn.flash_attn_triton import (
+                        flash_attn_func as flash_attn_unpadded_unpacked_func_triton,
+                    )
+
+                    self.flash_triton_fn = flash_attn_unpadded_unpacked_func_triton
+                    self.flash_qkv_fn = flash_attn_func
+                    self.flash_varlen_qkv_fn = flash_attn_varlen_func
             else:
                 self.scale_mask_softmax = FusedScaleMaskSoftmax(
                     input_in_fp16=self.fp16,
@@ -598,11 +610,18 @@ class ParallelSelfAttention(nn.Module):
             # if we use Sliding Window Attention / AliBi.
             # Flash attn defaults to (-1,-1), or
             # does not have this kwarg prior to v2.3.0
-            extra_kwargs = (
-                {"window_size": (self.sliding_window_width, -1)}
-                if self.sliding_window_width is not None
-                else {}
-            )
+            if self.use_flash_attention_4:
+                extra_kwargs = (
+                    {"window_size": (self.sliding_window_width, 0)}
+                    if self.sliding_window_width is not None
+                    else {}
+                )
+            else:
+                extra_kwargs = (
+                    {"window_size": (self.sliding_window_width, -1)}
+                    if self.sliding_window_width is not None
+                    else {}
+                )
             if self.pos_emb == "alibi":
                 extra_kwargs["alibi_slopes"] = self.alibi_embed.slopes.to(
                     query_layer.device
@@ -643,25 +662,39 @@ class ParallelSelfAttention(nn.Module):
                     value_layer.reshape(
                         (v_shape[0] * v_shape[1], v_shape[2], v_shape[3])
                     ),
-                    cu_seqlens_q,
-                    cu_seqlens_k,
-                    max_seqlen_q,
-                    max_seqlen_k,
+                    cu_seqlens_q=cu_seqlens_q,
+                    cu_seqlens_k=cu_seqlens_k,
+                    max_seqlen_q=max_seqlen_q,
+                    max_seqlen_k=max_seqlen_k,
                     softmax_scale=None,
                     causal=is_causal,
                     **extra_kwargs,
                 )
+                if isinstance(output, tuple):
+                    output = output[0]
                 output = output.reshape(q_shape)
             else:
-                output = self.flash_qkv_fn(
-                    query_layer,
-                    key_layer,
-                    value_layer,
-                    self.dropout_p if self.training else 0.0,
-                    softmax_scale=None,
-                    causal=True,
-                    **extra_kwargs,
-                )
+                if self.use_flash_attention_4:
+                    output = self.flash_qkv_fn(
+                        query_layer,
+                        key_layer,
+                        value_layer,
+                        softmax_scale=None,
+                        causal=True,
+                        **extra_kwargs,
+                    )
+                    if isinstance(output, tuple):
+                        output = output[0]
+                else:
+                    output = self.flash_qkv_fn(
+                        query_layer,
+                        key_layer,
+                        value_layer,
+                        self.dropout_p if self.training else 0.0,
+                        softmax_scale=None,
+                        causal=True,
+                        **extra_kwargs,
+                    )
 
             matmul_result = output
             # [b, sq, np, hn] -> [b, np, sq, hn]

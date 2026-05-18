@@ -644,6 +644,14 @@ Model Arguments
 
 
 
+- **flash_attention_backend**: Literal['flash_attn_2', 'flash_attn_4']
+
+    Default = flash_attn_2
+
+    Flash Attention backend to use when attention_config contains "flash". Use "flash_attn_4" with the flash-attn-4 CuTeDSL package.
+
+
+
 - **scaled_upper_triang_masked_softmax_fusion**: bool
 
     Default = False
@@ -2615,4 +2623,3 @@ Args for deepspeed runner (deepspeed.launcher.runner).
     Default = None
 
     Adds a `--account` to the DeepSpeed launch command. In DeeperSpeed this is passed on to the SlurmLauncher as well. Sometimes necessary for cluster rules, or so I've heard.
-

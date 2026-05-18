@@ -314,6 +314,14 @@ class NeoXArgsModel(NeoXArgsTemplate):
     Use flash attention's version of swiglu
     """
 
+    flash_attention_backend: Literal["flash_attn_2", "flash_attn_4"] = "flash_attn_2"
+    """
+    Flash Attention backend to use when attention_config contains "flash".
+
+    "flash_attn_2" uses the flash-attn package. "flash_attn_4" uses the
+    flash-attn-4 CuTeDSL package.
+    """
+
     scaled_upper_triang_masked_softmax_fusion: bool = False
     """
     Enable fusion of query_key_value_scaling time (upper diagonal) masking and softmax.
