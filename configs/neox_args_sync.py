@@ -22,6 +22,10 @@ DEFAULT_DEEPSPEED_PY = (
 )
 DEFAULT_PY_FILES = (DEFAULT_NEOX_PY, DEFAULT_DEEPSPEED_PY)
 IGNORED_ARGS = {"git_hash"}
+INTRO = (
+    "Arguments for gpt-neox. All of the following can be specified in your .yml "
+    "config file(s):"
+)
 
 SECTION_RE = re.compile(r"^##\s+(\S+)\s*$")
 ARG_RE = re.compile(r"^-\s+\*\*([A-Za-z_][A-Za-z0-9_]*)\*\*:\s*(.*)$")
@@ -243,8 +247,10 @@ def parse_python_files(paths):
 
 def parse_python_section_files(paths):
     sections = []
-    for path in paths:
-        sections.extend(parse_python_sections(path))
+    for source_index, path in enumerate(paths):
+        for section in parse_python_sections(path):
+            section["source_index"] = source_index
+            sections.append(section)
 
     last_arg_by_name = {}
     for section in sections:
@@ -258,48 +264,6 @@ def parse_python_section_files(paths):
     return sections
 
 
-def print_group(title: str, rows):
-    print(title)
-    if not rows:
-        print("  None")
-        return
-
-    for name, left, right in rows:
-        print(f"  {name}")
-        if left:
-            print(f"    md: {left['section']}:{left['line']}")
-        if right:
-            print(f"    py: {right['path']}:{right['section']}:{right['line']}")
-
-
-def print_description_mismatches(rows):
-    print("Descriptions differ for common args:")
-    if not rows:
-        print("  None")
-        return
-
-    for name, md_arg, py_arg in rows:
-        print(f"  {name}")
-        print(f"    md: {md_arg['section']}:{md_arg['line']}")
-        print(f"    py: {py_arg['path']}:{py_arg['section']}:{py_arg['line']}")
-        print(f"    md description: {md_arg['description'] or '<empty>'}")
-        print(f"    py description: {py_arg['description'] or '<empty>'}")
-
-
-def print_type_mismatches(rows):
-    print("Types differ for common args:")
-    if not rows:
-        print("  None")
-        return
-
-    for name, md_arg, py_arg in rows:
-        print(f"  {name}")
-        print(f"    md: {md_arg['section']}:{md_arg['line']}")
-        print(f"    py: {py_arg['path']}:{py_arg['section']}:{py_arg['line']}")
-        print(f"    md type: {display_value(md_arg['type'])}")
-        print(f"    py type: {display_value(py_arg['type'])}")
-
-
 def display_value(value: str) -> str:
     if value == "":
         return "<empty>"
@@ -308,157 +272,41 @@ def display_value(value: str) -> str:
     return value
 
 
-def print_default_mismatches(rows):
-    print("Defaults differ for common args:")
-    if not rows:
-        print("  None")
-        return
-
-    for name, md_arg, py_arg in rows:
-        print(f"  {name}")
-        print(f"    md: {md_arg['section']}:{md_arg['line']}")
-        print(f"    py: {py_arg['path']}:{py_arg['section']}:{py_arg['line']}")
-        print(f"    md default: {display_value(md_arg['default'])}")
-        print(f"    py default: {display_value(py_arg['default'])}")
-
-
-def parse_markdown_sections(path: Path):
-    lines = path.read_text().splitlines()
-    section_starts = [
-        (index, SECTION_RE.match(line).group(1))
-        for index, line in enumerate(lines)
-        if SECTION_RE.match(line)
-    ]
-    sections = []
-
-    for section_index, (start, name) in enumerate(section_starts):
-        end = (
-            section_starts[section_index + 1][0]
-            if section_index + 1 < len(section_starts)
-            else len(lines)
-        )
-        args = []
-        index = start + 1
-        while index < end:
-            arg_match = ARG_RE.match(lines[index])
-            if not arg_match:
-                index += 1
-                continue
-
-            arg_end = index + 1
-            while arg_end < end:
-                if ARG_RE.match(lines[arg_end]) or SECTION_RE.match(lines[arg_end]):
-                    break
-                arg_end += 1
-
-            args.append(
-                {
-                    "name": arg_match.group(1),
-                    "line": index + 1,
-                    "section": name,
-                    "type": arg_match.group(2).strip(),
-                    "default": extract_markdown_default(lines[index + 1 : arg_end]),
-                    "description": extract_markdown_description(
-                        lines[index + 1 : arg_end]
-                    ),
-                    "start": index,
-                    "end": arg_end,
-                    "block": lines[index:arg_end],
-                }
-            )
-            index = arg_end
-
-        sections.append({"name": name, "start": start, "end": end, "args": args})
-
-    return lines, sections
-
-
 def render_arg_block(arg):
     lines = [
         f"- **{arg['name']}**: {arg['type']}",
         "",
         f"    Default = {arg['default']}",
-        "",
     ]
     raw_description = arg.get("raw_description", "")
     if raw_description:
+        lines.append("")
         lines.extend(
             f"    {line}" if line else "" for line in raw_description.splitlines()
         )
-    else:
-        lines.append("    ")
-    lines.extend(["", ""])
-    return lines
+    return "\n".join(lines)
 
 
 def render_section(section):
-    lines = ["", "", f"## {section['name']}", "", section["doc"], "", ""]
-    for arg in section["args"]:
-        lines.extend(render_arg_block(arg))
-    return lines
+    blocks = [f"## {section['name']}", section["doc"]]
+    blocks.extend(render_arg_block(arg) for arg in section["args"])
+    return "\n\n".join(blocks)
 
 
 def should_include_section(section_name: str, include_deepspeed: bool):
     return include_deepspeed or not section_name.startswith("NeoXArgsDeepspeed")
 
 
-def markdown_arg_matches_python(md_arg, py_arg):
-    return (
-        md_arg["type"] == py_arg["type"]
-        and md_arg["default"] == py_arg["default"]
-        and md_arg["description"] == py_arg["description"]
-    )
-
-
 def sync_markdown(path: Path, py_sections, include_deepspeed: bool):
     original = path.read_text()
-    lines, md_sections = parse_markdown_sections(path)
-    py_sections_by_name = {section["name"]: section for section in py_sections}
-    output = []
-    handled_sections = set()
-    cursor = 0
-
-    for md_section in md_sections:
-        output.extend(lines[cursor : md_section["start"]])
-        py_section = py_sections_by_name.get(md_section["name"])
-        if py_section is None or not should_include_section(
-            md_section["name"], include_deepspeed
-        ):
-            output.extend(lines[md_section["start"] : md_section["end"]])
-            cursor = md_section["end"]
-            continue
-
-        handled_sections.add(md_section["name"])
-        if md_section["args"]:
-            prefix_end = md_section["args"][0]["start"]
-            suffix_start = md_section["args"][-1]["end"]
-            output.extend(lines[md_section["start"] : prefix_end])
-        else:
-            suffix_start = md_section["end"]
-            output.extend(lines[md_section["start"] : md_section["end"]])
-
-        md_args_by_name = {arg["name"]: arg for arg in md_section["args"]}
-        for arg in py_section["args"]:
-            md_arg = md_args_by_name.get(arg["name"])
-            if md_arg and (
-                arg["name"] in IGNORED_ARGS or markdown_arg_matches_python(md_arg, arg)
-            ):
-                output.extend(md_arg["block"])
-            else:
-                output.extend(render_arg_block(arg))
-
-        output.extend(lines[suffix_start : md_section["end"]])
-        cursor = md_section["end"]
-
-    output.extend(lines[cursor:])
-    for py_section in py_sections:
-        if py_section["name"] in handled_sections or not should_include_section(
-            py_section["name"], include_deepspeed
-        ):
-            continue
-        output.extend(render_section(py_section))
-
-    updated = "\n".join(output).rstrip() + "\n"
+    rendered_sections = [
+        render_section(section)
+        for section in sorted(
+            py_sections, key=lambda section: (section["source_index"], section["name"])
+        )
+        if should_include_section(section["name"], include_deepspeed)
+    ]
+    updated = INTRO + "\n\n" + "\n\n".join(rendered_sections).rstrip() + "\n"
     if updated != original:
         path.write_text(updated)
         return True
@@ -509,19 +357,71 @@ def has_drift(diff):
     return any(diff.values())
 
 
+def format_md_location(arg):
+    return f"{arg['section']}:{arg['line']}"
+
+
+def format_py_location(arg):
+    return f"{arg['path']}:{arg['section']}:{arg['line']}"
+
+
 def print_report(md_args, py_args, py_paths, md_path, diff):
     print(f"Markdown args: {len(md_args)} ({md_path})")
     print(f"Python args:   {len(py_args)} ({', '.join(str(path) for path in py_paths)})")
+
+    if not has_drift(diff):
+        return
+
     print()
-    print_group("In markdown but not in Python sources:", diff["md_only"])
+    print("NeoX argument docs are out of sync.")
+
+    if diff["md_only"]:
+        print()
+        print("Args only in markdown:")
+        for name, md_arg, _ in diff["md_only"]:
+            print(f"  - {name} ({format_md_location(md_arg)})")
+
+    if diff["py_only"]:
+        print()
+        print("Args only in Python sources:")
+        for name, _, py_arg in diff["py_only"]:
+            print(f"  - {name} ({format_py_location(py_arg)})")
+
+    if diff["description_mismatches"]:
+        print()
+        print("Description mismatches:")
+        for name, md_arg, py_arg in diff["description_mismatches"]:
+            print(f"  - {name}")
+            print(f"    md: {format_md_location(md_arg)}")
+            print(f"    py: {format_py_location(py_arg)}")
+            print(f"    md description: {md_arg['description'] or '<empty>'}")
+            print(f"    py description: {py_arg['description'] or '<empty>'}")
+
+    if diff["type_mismatches"]:
+        print()
+        print("Type mismatches:")
+        for name, md_arg, py_arg in diff["type_mismatches"]:
+            print(f"  - {name}")
+            print(f"    md: {format_md_location(md_arg)} = {display_value(md_arg['type'])}")
+            print(f"    py: {format_py_location(py_arg)} = {display_value(py_arg['type'])}")
+
+    if diff["default_mismatches"]:
+        print()
+        print("Default mismatches:")
+        for name, md_arg, py_arg in diff["default_mismatches"]:
+            print(f"  - {name}")
+            print(
+                f"    md: {format_md_location(md_arg)} = "
+                f"{display_value(md_arg['default'])}"
+            )
+            print(
+                f"    py: {format_py_location(py_arg)} = "
+                f"{display_value(py_arg['default'])}"
+            )
+
     print()
-    print_group("In Python sources but not in markdown:", diff["py_only"])
-    print()
-    print_description_mismatches(diff["description_mismatches"])
-    print()
-    print_type_mismatches(diff["type_mismatches"])
-    print()
-    print_default_mismatches(diff["default_mismatches"])
+    print("To fix, run:")
+    print("  python configs/neox_args_sync.py --sync")
 
 
 def main() -> int:
