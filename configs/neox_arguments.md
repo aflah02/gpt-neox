@@ -18,15 +18,13 @@ LR Scheduler Arguments
 
     Default = None
 
-    Number of iterations to decay learning rate over. If None, defaults to 
-    --train-iters or the equivalent inferred value from train_epochs.
+    Number of iterations to decay learning rate over, If None defaults to --train-iters or the equivalent inferred valued from train_epochs.
 
 - **lr_decay_fraction**: float
 
     Default = None
 
-    Effective fraction of training over which to decay lr. Overrides lr_decay_iters. 
-    Useful when specifying train_epochs.
+    Effective fraction of training over which to decay lr, overrides lr_decay_iters, useful when specifying train_epochs
 
 - **min_lr**: float
 
@@ -79,6 +77,13 @@ Logging Arguments
     Default = None
 
     Weights and Biases group name - used to group together "runs".
+
+
+- **wandb_run_name**: str
+
+    Default = None
+
+    Weights and Biases run name for the current experiment
 
 
 
@@ -146,43 +151,54 @@ Logging Arguments
 
 
 
-- **comet_workspace**: Optional
+- **comet_workspace**: typing.Optional[str]
 
     Default = None
 
     Comet workspace name, if not configured Comet Experiments will be created in the user configured default workspace.
 
 
-
-- **comet_project**: Optional
+- **comet_project**: typing.Optional[str]
 
     Default = None
 
     Comet project name, if not configured Comet Experiments will be created in the Uncategorized Experiments project.
 
 
-
-- **comet_experiment_name**: Optional
+- **comet_experiment_name**: typing.Optional[str]
 
     Default = None
 
     Custom name for the Comet experiment. If not provided, a random name is used.
 
 
-
-- **comet_tags**: Optional
+- **comet_tags**: typing.Optional[list]
 
     Default = None
 
     List of tags to attach to the created Comet Experiment.
 
 
-
-- **comet_others**: Optional
+- **comet_others**: typing.Optional[dict]
 
     Default = None
 
     Custom metadata to attach to the created Comet Experiment.
+
+
+- **comet_experiment**: Any
+
+    Default = None
+
+    Initialized comet experiment object used to log data
+
+
+
+- **peak_theoretical_tflops**: float
+
+    Default = None
+
+    The peak hardware flops with which to compute MFU and HFU, in units of teraflops. Automatic detection is more trouble than it's worth, so this is left to the user. Helpful table listed at https://github.com/stas00/ml-engineering/tree/master/compute/accelerator#tflops-comparison-table
 
 
 
@@ -272,8 +288,8 @@ Logging Arguments
 
     Default = False
 
-    Enable nsys profiling. When using this option,
-    nsys options should be specified in commandline.
+    Enable nsys and pytorch profiling. When using this option with nsys,
+    nsys options should be directly specified in commandline.
     An example nsys commandline is
     ```
     nsys profile -s none -t nvtx,cuda -o <path/to/output_file>
@@ -338,7 +354,6 @@ Mixture of Expert (MoE) Arguments
     TopK is only used for inference/eval.
 
 
-
 - **moe_lbl_in_fp32**: bool
 
     Default = False
@@ -367,7 +382,6 @@ Model Arguments
     Default = None
 
     description of the used precision, either one of fp16 or fp32 (and in the future bf16).
-
 
 
 - **num_layers**: int
@@ -458,12 +472,11 @@ Model Arguments
 
 
 
-- **norm**: typing.Literal['layernorm', 'rmsnorm', 'scalenorm', 'te_rmsnorm', 'te_layernorm']
+- **norm**: typing.Literal['layernorm', 'rmsnorm', 'non_parametric_layernorm', 'scalenorm', 'te_rmsnorm', 'te_layernorm']
 
     Default = layernorm
 
-    Normalization layer to use. Choose from "layernorm", "rmsnorm", "scalenorm", "te_rmsnorm", "te_layernorm".
-
+    Normalization layer to use. Choose from "layernorm", "rmsnorm", "non_parametric_layernorm", "scalenorm", "te_rmsnorm", "te_layernorm".
 
 
 - **layernorm_fusion**: bool
@@ -519,7 +532,6 @@ Model Arguments
     Default = learned
 
     Type of positional embedding to use - choose from 'learned', 'rotary', 'sinusoidal', 'rpe', 'none'
-
 
 
 - **rpe_num_buckets**: int
@@ -635,7 +647,6 @@ Model Arguments
     Activation function to use - choose from ["gelu", "geglu", "relu", "softsign", "swish", "mish", "silu", "reglu", "swiglu", "bilinear", "glu"]
 
 
-
 - **use_flashattn_swiglu**: bool
 
     Default = False
@@ -689,7 +700,6 @@ Model Arguments
     Default = None
 
     Optional override for the fused kernels build directory. If unset, defaults to `megatron/fused_kernels/build` relative to the package.
-
 
 
 - **fp16_lm_cross_entropy**: bool
@@ -768,14 +778,12 @@ Model Arguments
     ["normal", "scaled_normal", "orthogonal", "scaled_orthogonal", "xavier_uniform", "xavier_normal", "wang_init", "small_init"]
 
 
-
 - **output_layer_init_method**: typing.Literal['normal', 'scaled_normal', 'orthogonal', 'scaled_orthogonal', 'xavier_uniform', 'xavier_normal', 'wang_init', 'small_init', 'single_residual_scaled_normal']
 
     Default = scaled_normal
 
     Init function used for ff residual outputs - choose from
     ["normal", "scaled_normal", "orthogonal", "scaled_orthogonal", "xavier_uniform", "xavier_normal", "wang_init", "small_init"]
-
 
 
 - **gmlp_attn_dim**: int
@@ -906,6 +914,119 @@ Model Arguments
     Parameter controlling whether the output layer is parallelized over the hidden dim (row) or the vocab dim (column)
 
 
+- **serve_model_weights**: bool
+
+    Default = False
+
+    If true, serve model weight pointers over a socket connection
+
+
+
+- **weight_server_port**: typing.Union[int, typing.List[int]]
+
+    Default = 6000
+
+    Port(s) to serve model weights over
+    If an integer is provided, the port for each GPU will be 6000 + global rank
+    If a list is provided, the ports will be used in order, e.g. rank0 will be weight_server_port[0]
+
+
+- **online_dataserver_ips**: typing.Union[str, typing.List[str]]
+
+    Default = localhost
+
+    ip addresses to connect to for online data serving, defaults to localhost
+
+
+- **online_dataserver_ports**: typing.Union[int, typing.List[int]]
+
+    Default = 10000
+
+    Port(s) to connect to for online data serving, defaults to 10000
+
+
+- **te_columnparallel**: bool
+
+    Default = False
+
+    Use TransformerEngine for RowParallelLinear layer.
+
+
+
+- **te_rowparallel**: bool
+
+    Default = False
+
+    Use TransformerEngine for ColumnParallelLinear layer.
+
+
+
+- **te_layernorm_mlp**: bool
+
+    Default = False
+
+    Use TransformerEngine for LayerNormMLP layer.
+
+
+
+- **te_mha**: bool
+
+    Default = False
+
+    Use TransformerEngine for MultiheadAttention layer.
+
+
+
+- **te_fp8_format**: typing.Literal['e4m3', 'hybrid']
+
+    Default = hybrid
+
+    Controls the FP8 data format used during forward and backward pass by TransformerEngine.
+    Hybrid uses E4M3 during forward pass, E5M2 during backward pass.
+
+
+- **te_fp8_wgrad**: bool
+
+    Default = True
+
+    When set to False, override FP8 config options and do the wgrad computation
+    in higher precision.
+
+
+
+- **te_fp8_amax_history_len**: int
+
+    Default = 1
+
+    The length of the amax history window used for scaling factor computation.
+
+
+
+- **te_fp8_amax_compute_algo**: str
+
+    Default = most_recent
+
+    Algorithm used for choosing the `amax` value for the scaling factor computation. There are 2
+    predefined choices: `max` chooses the largest `amax` in the history window, while `most_recent`
+    always chooses the most recently seen value.
+
+
+
+- **te_fp8_margin**: int
+
+    Default = 0
+
+    Margin for the scaling factor computation.
+
+
+
+- **te_fp8_mha**: bool
+
+    Default = False
+
+    When set to True, use the FP8 implementation of Multi Head Attention.
+
+
 
 - **dim_att**: int
 
@@ -944,7 +1065,6 @@ Optimizer Arguments
     NOTE: sgd will use MuSGD from Mup. Mup must be enabled for this optimizer.
 
 
-
 - **use_bnb_optimizer**: bool
 
     Default = False
@@ -958,7 +1078,6 @@ Optimizer Arguments
     Default = None
 
     Zero Optimizer stage
-
 
 
 - **zero_reduce_scatter**: bool
@@ -1159,14 +1278,6 @@ Misc. Arguments
 
 
 
-- **save_iters**: list
-
-    Default = None
-
-    Set during training
-
-
-
 - **global_num_gpus**: int
 
     Default = None
@@ -1305,7 +1416,7 @@ Text Generation arguments
 
 - **prompt_end**: str
 
-    Default = 
+    Default = '\n'
 
 
     a single prompt's end. Defaults to newline
@@ -1374,7 +1485,6 @@ Tokenizer Arguments
     Default = GPT2BPETokenizer
 
     Type of tokenizer to use - should be one of ["GPT2BPETokenizer", "HFTokenizer", "HFGPT2Tokenizer", "SPMTokenizer", "CharLevelTokenizer", "TiktokenTokenizer"]
-
 
 
 - **padded_vocab_size**: int
@@ -1643,7 +1753,6 @@ Training Arguments
     Implementation of indexed datasets, can be one of "infer", "cached", or "mmap"
 
 
-
 - **pack_impl**: typing.Literal['packed', 'pack_until_overflow', 'unpacked']
 
     Default = packed
@@ -1653,21 +1762,18 @@ Training Arguments
     warning: pack_until_overflow is very naive and will likely have issues with pretraining scale datasets
 
 
-
-- **dataset_impl**: typing.Literal['gpt2', 'pairwise']
+- **dataset_impl**: typing.Literal['gpt2', 'pairwise', 'online']
 
     Default = gpt2
 
-    Dataset implementation, can be one of "gpt2" or "pairwise"
+    Dataset implementation, can be one of "gpt2", "pairwise", or "online"
 
 
-
-- **train_impl**: typing.Literal['normal', 'dpo', 'rm', 'kto']
+- **train_impl**: typing.Literal['normal', 'dpo', 'rm', 'kto', 'reinforce']
 
     Default = normal
 
-    Training implementation, can be one of "normal", "dpo", "kto", or "rm"
-
+    Training implementation, can be one of "normal", "dpo", "kto", "reinforce", or "rm"
 
 
 - **dpo_fp32**: bool
@@ -1718,11 +1824,53 @@ Training Arguments
 
 
 
+- **z_loss**: float
+
+    Default = 0.0
+
+    Z-loss parameter, only implemented for RM training currently.
+    https://arxiv.org/pdf/2204.02311
+    https://arxiv.org/pdf/2309.10305
+
+
+
 - **kto_beta**: float
 
     Default = 0.1
 
     Beta value for KTO
+
+
+
+- **fp32_reinforce**: bool
+
+    Default = True
+
+    Whether to cast logits to fp32 for Reinforce loss calculation.
+
+
+
+- **kl_impl**: typing.Literal['abs', 'mse', 'kl', 'full']
+
+    Default = mse
+
+    KL divergence implementation, can be one of "abs", "mse", "kl", or "full"
+
+
+- **kl_div_beta**: float
+
+    Default = 0.1
+
+    Beta value for KL divergence in Reinforce loss calculation.
+
+
+
+- **reinforce_leave_one_out**: bool
+
+    Default = False
+
+    Whether to use reinforce leave one out for training
+    (from https://arxiv.org/abs/2402.14740 and https://api.semanticscholar.org/CorpusID:198489118)
 
 
 
@@ -1801,8 +1949,7 @@ Training Arguments
     while "log" implies that the number of steps between each checkpoint will be multiplied by `checkpoint-factor` at each step, starting from step 1.
 
 
-
-- **checkpoint_factor**: int
+- **checkpoint_factor**: typing.Union[int, float]
 
     Default = None
 
@@ -1815,7 +1962,6 @@ Training Arguments
     steps [1, 2, 4, 8, 16, 32, 64, 100].
 
     Note that the last checkpoint step is always saved.
-
 
 
 - **extra_save_iters**: list
@@ -2385,16 +2531,6 @@ Args for deepspeed config
 
 
 
-- **autotuning**: dict
-
-    Default = None
-
-    Configuration for using autotuning.
-
-    Dictionary as described in Deepspeed documentation: https://www.deepspeed.ai/docs/config-json/#autotuning
-
-
-
 - **activation_checkpointing**: dict
 
     Default = None
@@ -2509,6 +2645,14 @@ Args for deepspeed config
 
 
 
+- **autotuning**: dict
+
+    Default = None
+
+    Dictionary as described in DeepSpeed autotuning documentation: https://github.com/microsoft/DeepSpeed/tree/master/deepspeed/autotuning
+
+
+
 ## NeoXArgsDeepspeedRunner
 
 Args for deepspeed runner (deepspeed.launcher.runner).
@@ -2585,15 +2729,6 @@ Args for deepspeed runner (deepspeed.launcher.runner).
     Launcher backend for multi-node training. Options currently include PDSH, OpenMPI, MVAPICH.
 
 
-
-- **force_multi**: bool
-
-    Default = False
-
-    Force multi-node training even if only one node is specified.
-
-
-
 - **autotuning_run**: str
 
     Default = None
@@ -2607,6 +2742,14 @@ Args for deepspeed runner (deepspeed.launcher.runner).
     Default = False
 
     If true, overrides the default check where DeepSpeed confirms that the headnode is accessible via ssh.
+
+
+
+- **force_multi**: bool
+
+    Default = False
+
+    If true, Force multi-node launcher mode, helps in cases where user wants to launch on single remote node.
 
 
 
