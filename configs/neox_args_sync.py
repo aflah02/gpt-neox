@@ -10,6 +10,7 @@ import argparse
 import ast
 from pathlib import Path
 import re
+import subprocess
 import sys
 import textwrap
 
@@ -140,6 +141,17 @@ def format_python_default(value, constants):
     return format_literal_default(literal_value)
 
 
+def get_git_commit_hash_default():
+    try:
+        return (
+            subprocess.check_output(["git", "describe", "--always"], cwd=REPO_ROOT)
+            .strip()
+            .decode()
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
 def format_literal_default(value):
     formatted = str(value)
     if formatted != formatted.strip() or any(char in formatted for char in "\n\r\t"):
@@ -188,6 +200,9 @@ def parse_python_sections(path: Path):
             )
             field_source = "\n".join(source_lines[stmt.lineno - 1 : end_exclusive])
             raw_description, description = extract_python_description(field_source)
+            default = format_python_default(stmt.value, constants)
+            if stmt.target.id == "git_hash":
+                default = format_literal_default(get_git_commit_hash_default())
             section_args.append(
                 {
                     "name": stmt.target.id,
@@ -195,7 +210,7 @@ def parse_python_sections(path: Path):
                     "line": stmt.lineno,
                     "section": node.name,
                     "type": format_python_type(stmt.annotation),
-                    "default": format_python_default(stmt.value, constants),
+                    "default": default,
                     "description": description,
                     "raw_description": raw_description,
                 }

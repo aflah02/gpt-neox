@@ -95,7 +95,7 @@ Logging Arguments
 
 - **git_hash**: str
 
-    Default = get_git_commit_hash()
+    Default = 75ebe64
 
     current git hash of repository
 
