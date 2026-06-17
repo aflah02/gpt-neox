@@ -1,4 +1,4 @@
-# Copyright (c) 2025, EleutherAI
+# Copyright (c) 2026, EleutherAI
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,8 +28,17 @@ from megatron.training import (
 from tests.common import BASE_CONFIG
 
 
-def explicit_eval_path_config(**overrides):
+def cpu_arg_config():
     config = deepcopy(BASE_CONFIG)
+    # Avoid hardware discovery in NeoXArgs.calculate_derived during CPU unit tests.
+    # Without this, configs with hostfile/include fall through to torch.cuda.device_count()
+    # and crash on systems with no visible GPUs.
+    config["global_num_gpus"] = 1
+    return config
+
+
+def explicit_eval_path_config(**overrides):
+    config = cpu_arg_config()
     config.pop("data_path", None)
     config.update(
         {
@@ -47,7 +56,7 @@ def explicit_eval_path_config(**overrides):
 
 @pytest.mark.cpu
 def test_eval_loss_logging_defaults_to_blended():
-    neox_args = NeoXArgs.from_dict(BASE_CONFIG)
+    neox_args = NeoXArgs.from_dict(cpu_arg_config())
 
     assert neox_args.eval_loss_logging == "blended"
     assert neox_args.eval_loss_aggregate == "weighted_mix"
@@ -85,7 +94,7 @@ def test_eval_loss_logging_invalid_name_length_fails():
 
 @pytest.mark.cpu
 def test_eval_loss_logging_rejects_data_path_split_for_separate_mode():
-    config = deepcopy(BASE_CONFIG)
+    config = cpu_arg_config()
     config["eval_loss_logging"] = "separate"
 
     with pytest.raises(ValueError, match="data_path plus split only supports blended"):
