@@ -1808,10 +1808,6 @@ def evaluate_named_data_iterators(
         )
 
     if neox_args.eval_loss_logging == "blended_and_separate":
-        if neox_args.eval_loss_aggregate != "weighted_mix":
-            raise NotImplementedError(
-                f"eval_loss_aggregate={neox_args.eval_loss_aggregate!r} is not implemented."
-            )
         blended_results = synthesize_weighted_mix_eval_results(
             named_eval_results, weights=weights
         )
