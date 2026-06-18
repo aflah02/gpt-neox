@@ -157,7 +157,8 @@ class DataDownloader(ABC):
         if self.ftfy:
             cmd += f"--ftfy "
 
-        os.system(cmd)
+        if os.system(cmd) != 0:
+            raise RuntimeError(f"Failed to tokenize dataset {self.name}")
 
     def prepare(self):
         if self._force_redownload:

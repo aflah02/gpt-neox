@@ -23,7 +23,7 @@ jobs:
         # https://scan.coverity.com/projects/<project>?tab=project_settings
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         path: gpt-neox
 
@@ -55,7 +55,7 @@ jobs:
           https://scan.coverity.com/builds?project=$COVERITY_PROJECT
 
     - name: Upload Scan Build as Artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: coverity-build-${{ github.sha }}
         path: build-results.bz2

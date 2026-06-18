@@ -4,6 +4,7 @@ on: "push"
 
 jobs:
   run-tests:
+    if: github.repository == 'EleutherAI/gpt-neox'
     #runs-on: ubuntu-latest
     runs-on: ubuntu-22.04
     steps:
