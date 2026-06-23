@@ -242,6 +242,8 @@ class GPT2ModelPipe(PipelineModule, torch.nn.Module):
         # Transformer layers
         for i in range(self.neox_args.num_layers):
             layer_type = self.neox_args.attention_config[i]
+            layer_pos_emb = self.neox_args.pos_emb_config[i]  # Get layer-specific positional embedding
+            
             if layer_type in ["gmlp", "amlp"]:
                 self.specs.append(
                     LayerSpec(
@@ -280,9 +282,10 @@ class GPT2ModelPipe(PipelineModule, torch.nn.Module):
                         init_method=self.init_method,
                         output_layer_init_method=self.output_layer_init_method,
                         layer_number=i,
-                        rpe=rpe_emb if self.neox_args.pos_emb == "rpe" else None,
-                        rotary=self.neox_args.pos_emb == "rotary",
+                        rpe=rpe_emb if layer_pos_emb == "rpe" else None,
+                        rotary=layer_pos_emb == "rotary",
                         use_cache=self.use_cache,
+                        layer_pos_emb=layer_pos_emb,
                     )
                 )
 
