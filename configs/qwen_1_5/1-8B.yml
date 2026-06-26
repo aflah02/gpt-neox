@@ -1,4 +1,4 @@
-# Based on https://huggingface.co/Qwen/Qwen1.5-0.5B/blob/main/config.json
+# Based on https://huggingface.co/Qwen/Qwen1.5-1.8B/blob/main/config.json
 
 {
   "pipe_parallel_size": 1,
@@ -7,8 +7,8 @@
 
   # model settings
   "num_layers": 24,
-  "hidden_size": 1024,
-  "intermediate_size": 8448, # 2816*3 as 3x needed for swiglu with neox
+  "hidden_size": 2048,
+  "intermediate_size": 16512, # 5504*3 as 3x needed for swiglu with neox
   "num_attention_heads": 16,
   "seq_length": 32768,
   "max_position_embeddings": 32768,
