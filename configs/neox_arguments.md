@@ -700,6 +700,14 @@ Model Arguments
 
 
 
+- **cross_entropy_loss_fusion**: bool
+
+    Default = False
+
+    Use the native Megatron-Core fused tensor-parallel cross entropy implementation.
+
+
+
 - **init_method_std**: float
 
     Default = 0.02

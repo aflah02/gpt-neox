@@ -349,6 +349,11 @@ class NeoXArgsModel(NeoXArgsTemplate):
     Move the cross entropy unreduced loss calculation for lm head to fp16.
     """
 
+    cross_entropy_loss_fusion: bool = False
+    """
+    Use the native Megatron-Core fused tensor-parallel cross entropy implementation.
+    """
+
     init_method_std: float = 0.02
     """
     Standard deviation of the zero mean normal distribution used for weight initialization.
