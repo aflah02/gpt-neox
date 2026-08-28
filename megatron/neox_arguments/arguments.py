@@ -1122,6 +1122,55 @@ class NeoXArgs(*BASE_CLASSES):
                 self.hidden_dropout == 0.0,
             ), "RWKV does not yet have dropout implemented"
 
+        if self.inter_document_attention_masking:
+            assert self.dataset_impl == "gpt2", (
+                "inter_document_attention_masking currently requires "
+                "dataset_impl='gpt2'"
+            )
+            assert self.train_impl == "normal", (
+                "inter_document_attention_masking currently requires "
+                "train_impl='normal'"
+            )
+
+            soft_prompt_enabled = self.soft_prompt_tuning is not None and (
+                self.soft_prompt_tuning.get("enabled", False)
+            )
+            assert not soft_prompt_enabled, (
+                "inter_document_attention_masking is not compatible with "
+                "soft prompt tuning"
+            )
+            assert not self.curriculum_learning, (
+                "inter_document_attention_masking is not compatible with "
+                "curriculum sequence-length training"
+            )
+
+            supported_attention_types = {"global", "flash"}
+            unsupported_attention_types = sorted(
+                set(self.attention_config) - supported_attention_types
+            )
+            assert not unsupported_attention_types, (
+                "inter_document_attention_masking does not yet support attention "
+                f"types: {unsupported_attention_types}"
+            )
+            assert self.te_mha or self.te_fp8_mha or all(
+                attention_type == "flash"
+                for attention_type in self.attention_config
+            ), (
+                "inter_document_attention_masking requires Transformer Engine "
+                "attention or FlashAttention for every transformer layer"
+            )
+
+            supported_position_embedding_types = {
+                "learned",
+                "rotary",
+                "alibi",
+                "none",
+            }
+            assert self.pos_emb in supported_position_embedding_types, (
+                "inter_document_attention_masking does not yet support positional "
+                f"embedding type '{self.pos_emb}'"
+            )
+
         # Sparsity config
         if self.sparsity_config is None:
             # Can't have a default value as an empty dict so need to set it here

@@ -1159,6 +1159,12 @@ class NeoXArgsTraining(NeoXArgsTemplate):
     warning: pack_until_overflow is very naive and will likely have issues with pretraining scale datasets
     """
 
+    inter_document_attention_masking: bool = False
+    """
+    Return document-boundary metadata from the dataloader so causal attention is
+    restricted to tokens from the same document in a packed training sample.
+    """
+
     dataset_impl: Literal["gpt2", "pairwise", "online"] = "gpt2"
     """
     Dataset implementation, can be one of "gpt2", "pairwise", or "online"

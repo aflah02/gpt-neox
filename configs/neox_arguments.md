@@ -1654,6 +1654,15 @@ Training Arguments
 
 
 
+- **inter_document_attention_masking**: bool
+
+    Default = False
+
+    Return document-boundary metadata from the dataloader so causal attention is
+    restricted to tokens from the same document in a packed training sample.
+
+
+
 - **dataset_impl**: typing.Literal['gpt2', 'pairwise']
 
     Default = gpt2
