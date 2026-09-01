@@ -228,7 +228,10 @@ def _build_inter_document_attention_metadata(document_lengths, seq_length):
             break
 
     if input_document_lengths:
+        # The last token is only used as final label and hence not part of tokens
         input_document_lengths[-1] -= 1
+
+        # Remove last entry if it is now empty
         if input_document_lengths[-1] == 0:
             input_document_lengths.pop()
 
