@@ -156,6 +156,58 @@ def test_merge_packed_sequence_metadata_handles_one_sample():
 
 
 @pytest.mark.cpu
+def test_pad_packed_sequence_metadata_uses_fixed_transport_shape():
+    many_documents = torch.tensor(
+        [0, 1, 3, 6, 10, 12], dtype=torch.int32
+    )
+    few_documents = torch.tensor([0, 6, 12], dtype=torch.int32)
+
+    padded_many, many_count = training._pad_packed_sequence_metadata(
+        many_documents, batch_size=2, sequence_length=6
+    )
+    padded_few, few_count = training._pad_packed_sequence_metadata(
+        few_documents, batch_size=2, sequence_length=6
+    )
+
+    assert padded_many.shape == padded_few.shape == (13,)
+    assert torch.equal(
+        padded_many,
+        torch.tensor(
+            [0, 1, 3, 6, 10, 12, 12, 12, 12, 12, 12, 12, 12],
+            dtype=torch.int32,
+        ),
+    )
+    assert torch.equal(
+        padded_few,
+        torch.tensor(
+            [0, 6, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12],
+            dtype=torch.int32,
+        ),
+    )
+    assert padded_many.dtype == padded_few.dtype == torch.int32
+    assert many_count.shape == few_count.shape == ()
+    assert many_count.dtype == few_count.dtype == torch.int32
+    assert many_count == 5
+    assert few_count == 2
+    assert torch.equal(padded_many[: many_count + 1], many_documents)
+    assert torch.equal(padded_few[: few_count + 1], few_documents)
+
+
+@pytest.mark.cpu
+def test_pad_packed_sequence_metadata_handles_maximum_document_count():
+    merged_cu_seqlens = torch.arange(13, dtype=torch.int32)
+
+    padded_cu_seqlens, num_documents = (
+        training._pad_packed_sequence_metadata(
+            merged_cu_seqlens, batch_size=2, sequence_length=6
+        )
+    )
+
+    assert torch.equal(padded_cu_seqlens, merged_cu_seqlens)
+    assert num_documents == 12
+
+
+@pytest.mark.cpu
 @pytest.mark.parametrize(
     ("field", "value", "error"),
     [

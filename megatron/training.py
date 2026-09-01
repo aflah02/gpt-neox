@@ -447,6 +447,47 @@ def _merge_packed_sequence_metadata(document_lengths, max_seqlen):
     return merged_cu_seqlens, max_seqlen.max()
 
 
+def _pad_packed_sequence_metadata(
+    merged_cu_seqlens, batch_size, sequence_length
+):
+    """Pad merged boundaries to a fixed shape for pipeline transport.
+
+    DeepSpeed caches pipeline activation shapes when dynamic shapes are
+    disabled. The real number of document boundaries varies by microbatch, so
+    repeat the terminal boundary until every microbatch has the maximum shape
+    ``[B * S + 1]``. ``num_documents`` records how much of the tensor is real.
+
+    For ``B = 2`` and ``S = 6``, merged boundaries
+    ``[0, 1, 3, 6, 10, 12]`` become::
+
+        [0, 1, 3, 6, 10, 12, 12, 12, 12, 12, 12, 12, 12]
+
+    and ``num_documents`` is the scalar ``5``.
+
+    Args:
+        merged_cu_seqlens: Unpadded int32 boundaries with shape ``[D + 1]``.
+        batch_size: Runtime microbatch size ``B``.
+        sequence_length: Per-sample input-token length ``S``.
+
+    Returns:
+        Fixed-width int32 boundaries and a scalar int32 document count.
+    """
+    assert merged_cu_seqlens.dim() == 1
+    assert merged_cu_seqlens.numel() > 0
+
+    transport_length = batch_size * sequence_length + 1
+    padding_length = transport_length - merged_cu_seqlens.numel()
+    assert padding_length >= 0
+
+    padded_cu_seqlens = torch.cat(
+        [merged_cu_seqlens, merged_cu_seqlens[-1:].expand(padding_length)]
+    )
+    num_documents = merged_cu_seqlens.new_tensor(
+        merged_cu_seqlens.numel() - 1
+    )
+    return padded_cu_seqlens, num_documents
+
+
 def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False):
     """Support function for get_batch / get_batch pipe (to avoid code repetition)"""
     data_b = mpu.broadcast_data(keys, data, datatype)
@@ -459,9 +500,16 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False
     )
     if cu_seqlens is not None:
         document_lengths = _get_packed_sequence_document_lengths(cu_seqlens)
-        # Step 3.4 will retain and pad the merged boundaries for fixed-shape
-        # pipeline transport.
-        _merge_packed_sequence_metadata(document_lengths, max_seqlen)
+        merged_cu_seqlens, max_seqlen = _merge_packed_sequence_metadata(
+            document_lengths, max_seqlen
+        )
+        cu_seqlens, num_documents = _pad_packed_sequence_metadata(
+            merged_cu_seqlens,
+            batch_size=tokens_.size(0),
+            sequence_length=neox_args.seq_length,
+        )
+        # Step 4 will add cu_seqlens, num_documents, and max_seqlen to the
+        # pipeline state consumed by each attention stage.
     if label_key in data_b:
         label_mask = (data_b[label_key].long() >= 0)[:, 1:].contiguous()
         labels = torch.where(
