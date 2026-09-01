@@ -566,6 +566,28 @@ def _get_packed_sequence_position_ids(document_lengths, total_tokens):
     return (token_offsets - token_document_starts).unsqueeze(0).contiguous()
 
 
+def _get_packed_sequence_masks(tokens, eod_token, eod_mask_loss):
+    """Build packed loss weights without allocating a dense attention mask.
+
+    Packed attention derives causality and document isolation from
+    ``cu_seqlens``, so the normal ``[1, 1, S, S]`` boolean mask is unnecessary.
+    A fixed one-element boolean tensor acts as the tensor-only placeholder that
+    DeepSpeed can carry through pipeline communication and checkpointing.
+
+    The loss mask preserves the normal batch path: every token starts with
+    weight one, and EOD positions are set to zero when ``eod_mask_loss`` is
+    enabled. The caller subsequently combines it with the label validity mask.
+
+    Returns:
+        The boolean attention-mask sentinel and float32 per-token loss mask.
+    """
+    attention_mask = tokens.new_zeros(1, dtype=torch.bool)
+    loss_mask = torch.ones(tokens.size(), dtype=torch.float, device=tokens.device)
+    if eod_mask_loss:
+        loss_mask[tokens == eod_token] = 0.0
+    return attention_mask, loss_mask
+
+
 def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False):
     """Support function for get_batch / get_batch pipe (to avoid code repetition)"""
     data_b = mpu.broadcast_data(keys, data, datatype)
@@ -603,26 +625,31 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False
     tokens = tokens_[:, :-1].contiguous()
 
     # Get the masks and position ids.
-    attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
-        data=tokens,
-        eod_token=neox_args.tokenizer.eod,
-        eod_mask_loss=neox_args.eod_mask_loss,
-        sliding_window_width=neox_args.sliding_window_width,
-    )
-
-    # combine loss masks from get_ltor_masks_and_position_ids with loss masks from data
-    loss_mask = label_mask.to(loss_mask.dtype) * loss_mask
     if cu_seqlens is not None:
+        attention_mask, loss_mask = _get_packed_sequence_masks(
+            tokens=tokens,
+            eod_token=neox_args.tokenizer.eod,
+            eod_mask_loss=neox_args.eod_mask_loss,
+        )
         position_ids = _get_packed_sequence_position_ids(
             document_lengths, total_tokens=tokens.numel()
         ).view_as(tokens)
+    else:
+        attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
+            data=tokens,
+            eod_token=neox_args.tokenizer.eod,
+            eod_mask_loss=neox_args.eod_mask_loss,
+            sliding_window_width=neox_args.sliding_window_width,
+        )
+
+    # Combine EOD loss masking with the validity mask from token/label data.
+    loss_mask = label_mask.to(loss_mask.dtype) * loss_mask
+    if cu_seqlens is not None:
         tokens, labels, loss_mask, position_ids = (
             _flatten_packed_sequence_tensors(
                 tokens, labels, loss_mask, position_ids
             )
         )
-        # The dense attention mask is not sequence-aligned [B, S] data. Step
-        # 3.7 will remove it from the packed path instead of flattening it.
     return tokens, labels, loss_mask, attention_mask, position_ids
 
 
@@ -762,6 +789,11 @@ def get_batch_pipe(data, neox_args, curr_scheduler=None):
 
 def get_batch_sequential(forward_input, neox_args):
     """A modification of get_batch() to work with the latest batch instead of an iterator."""
+    if neox_args.inter_document_attention_masking:
+        # _get_batch already supplied the packed mask sentinel and document-local
+        # positions. Preserve them instead of allocating a new dense mask.
+        return forward_input
+
     attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
         data=forward_input[0],
         eod_token=neox_args.tokenizer.eod,

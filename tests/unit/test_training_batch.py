@@ -75,7 +75,7 @@ def test_get_batch_flattens_sequence_aligned_tensors_when_enabled(monkeypatch):
         lambda keys, source, datatype: {key: source[key] for key in keys},
     )
 
-    tokens, labels, loss_mask, _, position_ids = training._get_batch(
+    tokens, labels, loss_mask, attention_mask, position_ids = training._get_batch(
         neox_args=_neox_args(),
         tokenizer=SimpleNamespace(eod=-1),
         keys=["text"],
@@ -93,6 +93,49 @@ def test_get_batch_flattens_sequence_aligned_tensors_when_enabled(monkeypatch):
     assert torch.equal(
         position_ids, torch.tensor([[0, 1, 0, 1, 0, 1, 2, 3]])
     )
+    assert attention_mask.shape == (1,)
+    assert attention_mask.dtype == torch.bool
+    assert not attention_mask.item()
+
+
+@pytest.mark.cpu
+def test_get_batch_packed_path_skips_dense_mask_and_preserves_loss_masking(
+    monkeypatch,
+):
+    data = _batch()
+    data["label"] = data["text"].clone()
+    data["label"][0, 2] = -1
+    neox_args = _neox_args()
+    neox_args.tokenizer.eod = 2
+    neox_args.eod_mask_loss = True
+
+    monkeypatch.setattr(
+        training.mpu,
+        "broadcast_data",
+        lambda keys, source, datatype: {key: source[key] for key in keys},
+    )
+    monkeypatch.setattr(
+        training,
+        "get_ltor_masks_and_position_ids",
+        lambda *args, **kwargs: pytest.fail("dense mask helper was called"),
+    )
+
+    _, labels, loss_mask, attention_mask, _ = training._get_batch(
+        neox_args=neox_args,
+        tokenizer=neox_args.tokenizer,
+        keys=["text", "label"],
+        data=data,
+        datatype=torch.int64,
+    )
+
+    assert attention_mask.shape == (1,)
+    assert attention_mask.dtype == torch.bool
+    assert torch.equal(
+        labels, torch.tensor([[1, 0, 3, 4, 6, 7, 8, 9]])
+    )
+    assert torch.equal(
+        loss_mask, torch.tensor([[1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
+    )
 
 
 @pytest.mark.cpu
@@ -106,7 +149,7 @@ def test_get_batch_does_not_broadcast_metadata_when_disabled(monkeypatch):
 
     monkeypatch.setattr(training.mpu, "broadcast_data", broadcast_data)
 
-    tokens, labels, loss_mask, _, position_ids = training._get_batch(
+    tokens, labels, loss_mask, attention_mask, position_ids = training._get_batch(
         neox_args=_neox_args(enabled=False),
         tokenizer=SimpleNamespace(eod=-1),
         keys=["text"],
@@ -123,6 +166,26 @@ def test_get_batch_does_not_broadcast_metadata_when_disabled(monkeypatch):
         position_ids,
         torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]]),
     )
+    assert attention_mask.shape == (1, 1, 4, 4)
+
+
+@pytest.mark.cpu
+def test_get_batch_sequential_preserves_packed_mask_sentinel(monkeypatch):
+    forward_input = (
+        torch.tensor([[0, 1, 2, 3]]),
+        torch.tensor([[0, 1, 0, 1]]),
+        torch.zeros(1, dtype=torch.bool),
+    )
+
+    monkeypatch.setattr(
+        training,
+        "get_ltor_masks_and_position_ids",
+        lambda *args, **kwargs: pytest.fail("dense mask helper was called"),
+    )
+
+    result = training.get_batch_sequential(forward_input, _neox_args())
+
+    assert result is forward_input
 
 
 @pytest.mark.cpu
