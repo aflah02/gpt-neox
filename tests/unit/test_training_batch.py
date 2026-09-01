@@ -66,6 +66,36 @@ def test_get_batch_broadcasts_packed_metadata_as_int32(monkeypatch):
 
 
 @pytest.mark.cpu
+def test_get_batch_flattens_sequence_aligned_tensors_when_enabled(monkeypatch):
+    data = _batch()
+
+    monkeypatch.setattr(
+        training.mpu,
+        "broadcast_data",
+        lambda keys, source, datatype: {key: source[key] for key in keys},
+    )
+
+    tokens, labels, loss_mask, _, position_ids = training._get_batch(
+        neox_args=_neox_args(),
+        tokenizer=SimpleNamespace(eod=-1),
+        keys=["text"],
+        data=data,
+        datatype=torch.int64,
+    )
+
+    assert torch.equal(
+        tokens, torch.tensor([[0, 1, 2, 3, 5, 6, 7, 8]])
+    )
+    assert torch.equal(
+        labels, torch.tensor([[1, 2, 3, 4, 6, 7, 8, 9]])
+    )
+    assert torch.equal(loss_mask, torch.ones((1, 8)))
+    assert torch.equal(
+        position_ids, torch.tensor([[0, 1, 2, 3, 0, 1, 2, 3]])
+    )
+
+
+@pytest.mark.cpu
 def test_get_batch_does_not_broadcast_metadata_when_disabled(monkeypatch):
     data = _batch()
     calls = []
@@ -76,7 +106,7 @@ def test_get_batch_does_not_broadcast_metadata_when_disabled(monkeypatch):
 
     monkeypatch.setattr(training.mpu, "broadcast_data", broadcast_data)
 
-    training._get_batch(
+    tokens, labels, loss_mask, _, position_ids = training._get_batch(
         neox_args=_neox_args(enabled=False),
         tokenizer=SimpleNamespace(eod=-1),
         keys=["text"],
@@ -85,6 +115,42 @@ def test_get_batch_does_not_broadcast_metadata_when_disabled(monkeypatch):
     )
 
     assert calls == [(["text"], torch.int64)]
+    assert tokens.shape == labels.shape == loss_mask.shape == position_ids.shape == (
+        2,
+        4,
+    )
+
+
+@pytest.mark.cpu
+def test_flatten_packed_sequence_tensors_preserves_row_major_alignment():
+    tokens = torch.tensor([[10, 11, 12], [20, 21, 22]])
+    labels = torch.tensor([[11, 12, 13], [21, 22, 23]])
+    loss_mask = torch.tensor([[1.0, 0.0, 1.0], [0.0, 1.0, 1.0]])
+    position_ids = torch.arange(3).unsqueeze(0).expand(2, -1)
+
+    flat_tokens, flat_labels, flat_loss_mask, flat_position_ids = (
+        training._flatten_packed_sequence_tensors(
+            tokens, labels, loss_mask, position_ids
+        )
+    )
+
+    assert torch.equal(flat_tokens, torch.tensor([[10, 11, 12, 20, 21, 22]]))
+    assert torch.equal(flat_labels, torch.tensor([[11, 12, 13, 21, 22, 23]]))
+    assert torch.equal(
+        flat_loss_mask, torch.tensor([[1.0, 0.0, 1.0, 0.0, 1.0, 1.0]])
+    )
+    assert torch.equal(
+        flat_position_ids, torch.tensor([[0, 1, 2, 0, 1, 2]])
+    )
+    assert all(
+        tensor.shape == (1, 6) and tensor.is_contiguous()
+        for tensor in (
+            flat_tokens,
+            flat_labels,
+            flat_loss_mask,
+            flat_position_ids,
+        )
+    )
 
 
 @pytest.mark.cpu

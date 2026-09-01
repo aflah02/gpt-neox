@@ -488,6 +488,29 @@ def _pad_packed_sequence_metadata(
     return padded_cu_seqlens, num_documents
 
 
+def _flatten_packed_sequence_tensors(tokens, labels, loss_mask, position_ids):
+    """Flatten sequence-aligned tensors into microbatch packed-token order.
+
+    Reshaping ``[[t00, t01], [t10, t11]]`` produces
+    ``[[t00, t01, t10, t11]]``. Applying the same row-major transformation to
+    inputs, targets, loss weights, and positions keeps every token aligned with
+    its corresponding training metadata.
+
+    Args:
+        tokens: Input token IDs with shape ``[B, S]``.
+        labels: Target token IDs with shape ``[B, S]``.
+        loss_mask: Per-token loss weights with shape ``[B, S]``.
+        position_ids: Per-token positions with shape ``[B, S]``.
+
+    Returns:
+        The four contiguous tensors, each with shape ``[1, B * S]``.
+    """
+    return tuple(
+        tensor.reshape(1, -1).contiguous()
+        for tensor in (tokens, labels, loss_mask, position_ids)
+    )
+
+
 def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False):
     """Support function for get_batch / get_batch pipe (to avoid code repetition)"""
     data_b = mpu.broadcast_data(keys, data, datatype)
@@ -534,6 +557,14 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False
 
     # combine loss masks from get_ltor_masks_and_position_ids with loss masks from data
     loss_mask = label_mask.to(loss_mask.dtype) * loss_mask
+    if cu_seqlens is not None:
+        tokens, labels, loss_mask, position_ids = (
+            _flatten_packed_sequence_tensors(
+                tokens, labels, loss_mask, position_ids
+            )
+        )
+        # The dense attention mask is not sequence-aligned [B, S] data. Step
+        # 3.7 will remove it from the packed path instead of flattening it.
     return tokens, labels, loss_mask, attention_mask, position_ids
 
 
