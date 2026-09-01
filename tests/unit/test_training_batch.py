@@ -122,6 +122,40 @@ def test_get_packed_sequence_document_lengths_preserves_single_document_samples(
 
 
 @pytest.mark.cpu
+def test_merge_packed_sequence_metadata_builds_microbatch_boundaries():
+    document_lengths = torch.tensor([1, 2, 3, 4, 2], dtype=torch.int32)
+    max_seqlen = torch.tensor([3, 4], dtype=torch.int32)
+
+    merged_cu_seqlens, microbatch_max_seqlen = (
+        training._merge_packed_sequence_metadata(document_lengths, max_seqlen)
+    )
+
+    assert torch.equal(
+        merged_cu_seqlens,
+        torch.tensor([0, 1, 3, 6, 10, 12], dtype=torch.int32),
+    )
+    assert merged_cu_seqlens.dtype == torch.int32
+    assert microbatch_max_seqlen.dim() == 0
+    assert microbatch_max_seqlen.dtype == torch.int32
+    assert microbatch_max_seqlen == document_lengths.max()
+
+
+@pytest.mark.cpu
+def test_merge_packed_sequence_metadata_handles_one_sample():
+    document_lengths = torch.tensor([2, 2], dtype=torch.int32)
+    max_seqlen = torch.tensor([2], dtype=torch.int32)
+
+    merged_cu_seqlens, microbatch_max_seqlen = (
+        training._merge_packed_sequence_metadata(document_lengths, max_seqlen)
+    )
+
+    assert torch.equal(
+        merged_cu_seqlens, torch.tensor([0, 2, 4], dtype=torch.int32)
+    )
+    assert microbatch_max_seqlen == 2
+
+
+@pytest.mark.cpu
 @pytest.mark.parametrize(
     ("field", "value", "error"),
     [

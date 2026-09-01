@@ -423,6 +423,30 @@ def _get_packed_sequence_document_lengths(cu_seqlens):
     return document_lengths[document_lengths > 0].contiguous()
 
 
+def _merge_packed_sequence_metadata(document_lengths, max_seqlen):
+    """Merge ordered document lengths into microbatch-wide packed metadata.
+
+    For document lengths ``[1, 2, 3, 4, 2]`` from two samples of length six,
+    the cumulative result is ``[0, 1, 3, 6, 10, 12]``. The sample join at
+    offset six appears only once. Per-sample maximums such as ``[3, 4]`` are
+    reduced to the scalar microbatch maximum ``4``.
+
+    Args:
+        document_lengths: Positive int32 lengths in microbatch token order.
+        max_seqlen: Per-sample int32 maximums with shape ``[B]``.
+
+    Returns:
+        The unpadded merged cumulative boundaries and scalar maximum length.
+    """
+    merged_cu_seqlens = torch.cat(
+        [
+            document_lengths.new_zeros(1),
+            document_lengths.cumsum(dim=0, dtype=document_lengths.dtype),
+        ]
+    )
+    return merged_cu_seqlens, max_seqlen.max()
+
+
 def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False):
     """Support function for get_batch / get_batch pipe (to avoid code repetition)"""
     data_b = mpu.broadcast_data(keys, data, datatype)
@@ -430,11 +454,14 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False
     label_key = keys[1] if len(keys) > 1 else None
     # Unpack.
     tokens_ = data_b[token_key].long()
-    cu_seqlens, _ = _broadcast_packed_sequence_metadata(neox_args, data, tokens_)
+    cu_seqlens, max_seqlen = _broadcast_packed_sequence_metadata(
+        neox_args, data, tokens_
+    )
     if cu_seqlens is not None:
-        # Step 3.3 will consume these ordered lengths when it builds the merged
-        # microbatch-wide cumulative boundaries.
-        _get_packed_sequence_document_lengths(cu_seqlens)
+        document_lengths = _get_packed_sequence_document_lengths(cu_seqlens)
+        # Step 3.4 will retain and pad the merged boundaries for fixed-shape
+        # pipeline transport.
+        _merge_packed_sequence_metadata(document_lengths, max_seqlen)
     if label_key in data_b:
         label_mask = (data_b[label_key].long() >= 0)[:, 1:].contiguous()
         labels = torch.where(
