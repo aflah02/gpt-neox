@@ -18,6 +18,7 @@ import pytest
 import torch
 
 from megatron import training
+from megatron.data.packed_sequence import PackedSequenceBatch
 
 
 def _neox_args(enabled=True, seq_length=4):
@@ -27,6 +28,13 @@ def _neox_args(enabled=True, seq_length=4):
         tokenizer=SimpleNamespace(eod=-1),
         eod_mask_loss=False,
         sliding_window_width=None,
+        train_impl="normal",
+        train_label_data_paths=None,
+        is_pipe_parallel=False,
+        memory_profiling=False,
+        iteration=0,
+        curriculum_learning=False,
+        fp16_lm_cross_entropy=False,
     )
 
 
@@ -50,6 +58,20 @@ def local_broadcast(monkeypatch):
 
     monkeypatch.setattr(training.mpu, "broadcast_data", broadcast_data)
     return calls
+
+
+@pytest.fixture
+def packed_batch_result():
+    return PackedSequenceBatch(
+        tokens=torch.tensor([[10, 11]]),
+        labels=torch.tensor([[11, 12]]),
+        loss_mask=torch.ones((1, 2)),
+        attention_mask=torch.zeros(1, dtype=torch.bool),
+        position_ids=torch.tensor([[0, 1]]),
+        cu_seqlens=torch.tensor([0, 2, 2], dtype=torch.int32),
+        num_documents=torch.tensor(1, dtype=torch.int32),
+        max_seqlen=torch.tensor(2, dtype=torch.int32),
+    )
 
 
 @pytest.mark.cpu
@@ -87,7 +109,7 @@ def test_get_batch_packed_path_skips_dense_mask_and_preserves_loss_masking(
         lambda *args, **kwargs: pytest.fail("dense mask helper was called"),
     )
 
-    tokens, labels, loss_mask, attention_mask, position_ids = training._get_batch(
+    batch = training._get_batch(
         neox_args=neox_args,
         tokenizer=neox_args.tokenizer,
         keys=["text", "label"],
@@ -95,6 +117,12 @@ def test_get_batch_packed_path_skips_dense_mask_and_preserves_loss_masking(
         datatype=torch.int64,
     )
 
+    assert isinstance(batch, PackedSequenceBatch)
+    tokens = batch.tokens
+    labels = batch.labels
+    loss_mask = batch.loss_mask
+    attention_mask = batch.attention_mask
+    position_ids = batch.position_ids
     assert torch.equal(tokens, torch.tensor([[0, 1, 2, 3, 5, 6, 7, 8]]))
     assert attention_mask.shape == (1,)
     assert attention_mask.dtype == torch.bool
@@ -108,6 +136,12 @@ def test_get_batch_packed_path_skips_dense_mask_and_preserves_loss_masking(
     assert torch.equal(
         position_ids, torch.tensor([[0, 1, 0, 1, 0, 1, 2, 3]])
     )
+    assert torch.equal(
+        batch.cu_seqlens,
+        torch.tensor([0, 2, 4, 8, 8, 8, 8, 8, 8], dtype=torch.int32),
+    )
+    assert batch.num_documents == 3
+    assert batch.max_seqlen == 4
 
 
 @pytest.mark.cpu
@@ -158,6 +192,9 @@ def test_get_batch_sequential_preserves_packed_mask_sentinel(monkeypatch):
     forward_input = (
         torch.tensor([[0, 1, 2, 3]]),
         torch.tensor([[0, 1, 0, 1]]),
+        torch.tensor([0, 2, 4, 4, 4], dtype=torch.int32),
+        torch.tensor(2, dtype=torch.int32),
+        torch.tensor(2, dtype=torch.int32),
         torch.zeros(1, dtype=torch.bool),
     )
 
@@ -170,6 +207,94 @@ def test_get_batch_sequential_preserves_packed_mask_sentinel(monkeypatch):
     result = training.get_batch_sequential(forward_input, _neox_args())
 
     assert result is forward_input
+
+
+@pytest.mark.cpu
+def test_get_batch_pipe_keeps_metadata_in_model_inputs(
+    monkeypatch, packed_batch_result
+):
+    monkeypatch.setattr(
+        training, "_get_batch", lambda *args, **kwargs: packed_batch_result
+    )
+
+    model_inputs, loss_inputs = training.get_batch_pipe(
+        data=None, neox_args=_neox_args()
+    )
+
+    assert all(
+        actual is expected
+        for actual, expected in zip(
+            model_inputs, packed_batch_result.model_inputs()
+        )
+    )
+    assert all(
+        actual is expected
+        for actual, expected in zip(loss_inputs, packed_batch_result.loss_inputs())
+    )
+
+
+@pytest.mark.cpu
+@pytest.mark.parametrize("packed", [False, True], ids=["ordinary", "packed"])
+def test_forward_step_builds_model_inputs_and_keeps_loss_inputs_separate(
+    monkeypatch, packed_batch_result, packed
+):
+    neox_args = _neox_args()
+    observed = {}
+    if packed:
+        batch_result = packed_batch_result
+        expected_model_inputs = packed_batch_result.model_inputs()
+        expected_loss_inputs = packed_batch_result.loss_inputs()
+    else:
+        dense_attention_mask = torch.zeros((1, 1, 2, 2), dtype=torch.bool)
+        batch_result = (
+            packed_batch_result.tokens,
+            packed_batch_result.labels,
+            packed_batch_result.loss_mask,
+            dense_attention_mask,
+            packed_batch_result.position_ids,
+        )
+        expected_model_inputs = (
+            packed_batch_result.tokens,
+            packed_batch_result.position_ids,
+            dense_attention_mask,
+        )
+        expected_loss_inputs = packed_batch_result.loss_inputs()
+
+    monkeypatch.setattr(
+        training,
+        "get_batch",
+        lambda neox_args, data_iterator: batch_result,
+    )
+
+    def model(model_inputs, neox_args):
+        observed["model_inputs"] = model_inputs
+        return torch.tensor(0.0)
+
+    def cross_entropy(output, loss_inputs, _fp16):
+        observed["loss_inputs"] = loss_inputs
+        return torch.tensor(1.5)
+
+    monkeypatch.setattr(training, "cross_entropy", cross_entropy)
+
+    loss, metrics = training.forward_step(
+        data_iterator=None,
+        model=model,
+        neox_args=neox_args,
+        timers=None,
+    )
+
+    assert all(
+        actual is expected
+        for actual, expected in zip(
+            observed["model_inputs"], expected_model_inputs
+        )
+    )
+    assert all(
+        actual is expected
+        for actual, expected in zip(observed["loss_inputs"], expected_loss_inputs)
+    )
+    assert loss == 1.5
+    assert metrics == {}
 
 
 @pytest.mark.cpu

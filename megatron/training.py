@@ -53,7 +53,10 @@ from megatron.data.data_utils import (
     build_train_valid_test_data_loaders,
     shift_and_wrap_data_loaders,
 )
-from megatron.data.packed_sequence import normalize_packed_sequence_batch
+from megatron.data.packed_sequence import (
+    PackedSequenceBatch,
+    normalize_packed_sequence_batch,
+)
 from megatron.initialize import initialize_megatron
 from megatron.learning_rates import AnnealingLR
 from megatron.logging import tb_wandb_log, training_log
@@ -418,7 +421,7 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False
     tokens = tokens_[:, :-1].contiguous()
 
     if cu_seqlens is not None:
-        packed_batch = normalize_packed_sequence_batch(
+        return normalize_packed_sequence_batch(
             tokens=tokens,
             labels=labels,
             label_mask=label_mask,
@@ -427,26 +430,16 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False
             eod_token=neox_args.tokenizer.eod,
             eod_mask_loss=neox_args.eod_mask_loss,
         )
-        tokens = packed_batch.tokens
-        labels = packed_batch.labels
-        loss_mask = packed_batch.loss_mask
-        attention_mask = packed_batch.attention_mask
-        position_ids = packed_batch.position_ids
-        cu_seqlens = packed_batch.cu_seqlens
-        num_documents = packed_batch.num_documents
-        max_seqlen = packed_batch.max_seqlen
-        # Step 4 will add cu_seqlens, num_documents, and max_seqlen to the
-        # pipeline state consumed by each attention stage.
-    else:
-        attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
-            data=tokens,
-            eod_token=neox_args.tokenizer.eod,
-            eod_mask_loss=neox_args.eod_mask_loss,
-            sliding_window_width=neox_args.sliding_window_width,
-        )
 
-        # Combine EOD masking with the validity mask from token/label data.
-        loss_mask = label_mask.to(loss_mask.dtype) * loss_mask
+    attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
+        data=tokens,
+        eod_token=neox_args.tokenizer.eod,
+        eod_mask_loss=neox_args.eod_mask_loss,
+        sliding_window_width=neox_args.sliding_window_width,
+    )
+
+    # Combine EOD masking with the validity mask from token/label data.
+    loss_mask = label_mask.to(loss_mask.dtype) * loss_mask
     return tokens, labels, loss_mask, attention_mask, position_ids
 
 
@@ -559,9 +552,18 @@ def get_batch_pipe(data, neox_args, curr_scheduler=None):
     keys = ["text", "label"] if neox_args.train_label_data_paths else ["text"]
     datatype = torch.int64
 
-    tokens, labels, loss_mask, attention_mask, position_ids = _get_batch(
+    batch = _get_batch(
         neox_args, neox_args.tokenizer, keys, data, datatype
     )
+    if isinstance(batch, PackedSequenceBatch):
+        if curr_scheduler is not None:
+            raise ValueError(
+                "inter_document_attention_masking is not compatible with "
+                "curriculum sequence-length training"
+            )
+        return batch.model_inputs(), batch.loss_inputs()
+
+    tokens, labels, loss_mask, attention_mask, position_ids = batch
     if curr_scheduler is not None:
         # iteration + 1 to align with how/when DeepSpeed updates the buffers
         curriculum_seqlen = curr_scheduler.update_difficulty(neox_args.iteration + 1)
@@ -586,9 +588,9 @@ def get_batch_pipe(data, neox_args, curr_scheduler=None):
 
 def get_batch_sequential(forward_input, neox_args):
     """A modification of get_batch() to work with the latest batch instead of an iterator."""
-    if neox_args.inter_document_attention_masking:
-        # _get_batch already supplied the packed mask sentinel and document-local
-        # positions. Preserve them instead of allocating a new dense mask.
+    if isinstance(forward_input, tuple) and len(forward_input) == 6:
+        # Packed model inputs already contain document-local positions, metadata,
+        # and the mask sentinel. Preserve the complete tensor-only context.
         return forward_input
 
     attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
@@ -618,9 +620,19 @@ def forward_step(
     if timers is not None:
         timers("batch generator").start()
     if neox_args.train_impl == "normal":
-        tokens, labels, loss_mask, attention_mask, position_ids = get_batch(
+        batch = get_batch(
             neox_args=neox_args, data_iterator=data_iterator
         )
+        if isinstance(batch, PackedSequenceBatch):
+            tokens = batch.tokens
+            labels = batch.labels
+            loss_mask = batch.loss_mask
+            attention_mask = batch.attention_mask
+            position_ids = batch.position_ids
+            model_inputs = batch.model_inputs()
+        else:
+            tokens, labels, loss_mask, attention_mask, position_ids = batch
+            model_inputs = (tokens, position_ids, attention_mask)
     elif neox_args.train_impl == "kto":
         (
             tokens,
@@ -655,7 +667,7 @@ def forward_step(
         torch.cuda.nvtx.range_push(f"Forward pass")
     metrics = {}
     if neox_args.train_impl == "normal":
-        outputs = model((tokens, position_ids, attention_mask), neox_args=neox_args)
+        outputs = model(model_inputs, neox_args=neox_args)
         if (
             is_train
             and neox_args.curriculum_learning

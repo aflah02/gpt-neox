@@ -31,6 +31,21 @@ class PackedSequenceBatch(NamedTuple):
     num_documents: torch.Tensor
     max_seqlen: torch.Tensor
 
+    def model_inputs(self):
+        """Return the flat tensor-only input consumed by the model."""
+        return (
+            self.tokens,
+            self.position_ids,
+            self.cu_seqlens,
+            self.num_documents,
+            self.max_seqlen,
+            self.attention_mask,
+        )
+
+    def loss_inputs(self):
+        """Return labels and loss weights kept outside the model context."""
+        return self.labels, self.loss_mask
+
 
 def _get_document_lengths(cu_seqlens):
     """Recover real document lengths from fixed-width collated boundaries.
