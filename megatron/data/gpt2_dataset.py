@@ -245,6 +245,7 @@ def _build_inter_document_attention_metadata(document_lengths, seq_length):
         else:
             input_document_lengths.append(shortfall)
 
+    # We use int32 here as FA expects them to be int32 - https://github.com/Dao-AILab/flash-attention/blob/main/csrc/flash_attn/flash_api.cpp#L579
     cu_seqlens = np.cumsum(
         np.array([0] + input_document_lengths, dtype=np.int32), dtype=np.int32
     )

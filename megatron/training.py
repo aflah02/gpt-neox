@@ -352,6 +352,48 @@ def pretrain(neox_args):
         )
 
 
+def _broadcast_packed_sequence_metadata(neox_args, data, text):
+    """Broadcast and validate collated packed-sequence metadata."""
+    if not neox_args.inter_document_attention_masking:
+        return None, None
+
+    metadata = mpu.broadcast_data(
+        ["cu_seqlens", "max_seqlen"], data, torch.int32
+    )
+    cu_seqlens = metadata["cu_seqlens"]
+    max_seqlen = metadata["max_seqlen"]
+
+    assert text.dim() == 2, (
+        "inter_document_attention_masking expects collated text with shape "
+        f"[B, S + 1], but got {tuple(text.shape)}"
+    )
+    batch_size, text_length = text.shape
+    expected_text_length = neox_args.seq_length + 1
+    assert text_length == expected_text_length, (
+        "inter_document_attention_masking expects collated text with shape "
+        f"[B, {expected_text_length}], but got {tuple(text.shape)}"
+    )
+    assert tuple(cu_seqlens.shape) == (batch_size, expected_text_length), (
+        "inter_document_attention_masking expects cu_seqlens with shape "
+        f"[{batch_size}, {expected_text_length}], but got "
+        f"{tuple(cu_seqlens.shape)}"
+    )
+    assert tuple(max_seqlen.shape) == (batch_size,), (
+        "inter_document_attention_masking expects max_seqlen with shape "
+        f"[{batch_size}], but got {tuple(max_seqlen.shape)}"
+    )
+    assert cu_seqlens.dtype == torch.int32, (
+        "inter_document_attention_masking expects cu_seqlens to be int32, "
+        f"but got {cu_seqlens.dtype}"
+    )
+    assert max_seqlen.dtype == torch.int32, (
+        "inter_document_attention_masking expects max_seqlen to be int32, "
+        f"but got {max_seqlen.dtype}"
+    )
+
+    return cu_seqlens, max_seqlen
+
+
 def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False):
     """Support function for get_batch / get_batch pipe (to avoid code repetition)"""
     data_b = mpu.broadcast_data(keys, data, datatype)
@@ -359,6 +401,9 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False
     label_key = keys[1] if len(keys) > 1 else None
     # Unpack.
     tokens_ = data_b[token_key].long()
+    # Step 3.1 deliberately leaves _get_batch's return contract unchanged.
+    # Step 3.2 will retain and normalize these validated sidecar tensors.
+    _broadcast_packed_sequence_metadata(neox_args, data, tokens_)
     if label_key in data_b:
         label_mask = (data_b[label_key].long() >= 0)[:, 1:].contiguous()
         labels = torch.where(
