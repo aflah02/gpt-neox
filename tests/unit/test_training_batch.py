@@ -40,9 +40,8 @@ def _batch():
     }
 
 
-@pytest.mark.cpu
-def test_get_batch_broadcasts_packed_metadata_as_int32(monkeypatch):
-    data = _batch()
+@pytest.fixture
+def local_broadcast(monkeypatch):
     calls = []
 
     def broadcast_data(keys, source, datatype):
@@ -50,6 +49,12 @@ def test_get_batch_broadcasts_packed_metadata_as_int32(monkeypatch):
         return {key: source[key] for key in keys}
 
     monkeypatch.setattr(training.mpu, "broadcast_data", broadcast_data)
+    return calls
+
+
+@pytest.mark.cpu
+def test_get_batch_broadcasts_packed_metadata_as_int32(local_broadcast):
+    data = _batch()
 
     training._get_batch(
         neox_args=_neox_args(),
@@ -59,48 +64,15 @@ def test_get_batch_broadcasts_packed_metadata_as_int32(monkeypatch):
         datatype=torch.int64,
     )
 
-    assert calls == [
+    assert local_broadcast == [
         (["text"], torch.int64),
         (["cu_seqlens", "max_seqlen"], torch.int32),
     ]
 
 
 @pytest.mark.cpu
-def test_get_batch_flattens_sequence_aligned_tensors_when_enabled(monkeypatch):
-    data = _batch()
-
-    monkeypatch.setattr(
-        training.mpu,
-        "broadcast_data",
-        lambda keys, source, datatype: {key: source[key] for key in keys},
-    )
-
-    tokens, labels, loss_mask, attention_mask, position_ids = training._get_batch(
-        neox_args=_neox_args(),
-        tokenizer=SimpleNamespace(eod=-1),
-        keys=["text"],
-        data=data,
-        datatype=torch.int64,
-    )
-
-    assert torch.equal(
-        tokens, torch.tensor([[0, 1, 2, 3, 5, 6, 7, 8]])
-    )
-    assert torch.equal(
-        labels, torch.tensor([[1, 2, 3, 4, 6, 7, 8, 9]])
-    )
-    assert torch.equal(loss_mask, torch.ones((1, 8)))
-    assert torch.equal(
-        position_ids, torch.tensor([[0, 1, 0, 1, 0, 1, 2, 3]])
-    )
-    assert attention_mask.shape == (1,)
-    assert attention_mask.dtype == torch.bool
-    assert not attention_mask.item()
-
-
-@pytest.mark.cpu
 def test_get_batch_packed_path_skips_dense_mask_and_preserves_loss_masking(
-    monkeypatch,
+    monkeypatch, local_broadcast
 ):
     data = _batch()
     data["label"] = data["text"].clone()
@@ -110,17 +82,12 @@ def test_get_batch_packed_path_skips_dense_mask_and_preserves_loss_masking(
     neox_args.eod_mask_loss = True
 
     monkeypatch.setattr(
-        training.mpu,
-        "broadcast_data",
-        lambda keys, source, datatype: {key: source[key] for key in keys},
-    )
-    monkeypatch.setattr(
         training,
         "get_ltor_masks_and_position_ids",
         lambda *args, **kwargs: pytest.fail("dense mask helper was called"),
     )
 
-    _, labels, loss_mask, attention_mask, _ = training._get_batch(
+    tokens, labels, loss_mask, attention_mask, position_ids = training._get_batch(
         neox_args=neox_args,
         tokenizer=neox_args.tokenizer,
         keys=["text", "label"],
@@ -128,45 +95,62 @@ def test_get_batch_packed_path_skips_dense_mask_and_preserves_loss_masking(
         datatype=torch.int64,
     )
 
+    assert torch.equal(tokens, torch.tensor([[0, 1, 2, 3, 5, 6, 7, 8]]))
     assert attention_mask.shape == (1,)
     assert attention_mask.dtype == torch.bool
+    assert not attention_mask.item()
     assert torch.equal(
         labels, torch.tensor([[1, 0, 3, 4, 6, 7, 8, 9]])
     )
     assert torch.equal(
         loss_mask, torch.tensor([[1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0]])
     )
+    assert torch.equal(
+        position_ids, torch.tensor([[0, 1, 0, 1, 0, 1, 2, 3]])
+    )
 
 
 @pytest.mark.cpu
-def test_get_batch_does_not_broadcast_metadata_when_disabled(monkeypatch):
+def test_get_batch_preserves_exact_behavior_when_disabled(local_broadcast):
     data = _batch()
-    calls = []
-
-    def broadcast_data(keys, source, datatype):
-        calls.append((keys, datatype))
-        return {key: source[key] for key in keys}
-
-    monkeypatch.setattr(training.mpu, "broadcast_data", broadcast_data)
+    neox_args = _neox_args(enabled=False)
+    neox_args.tokenizer.eod = 2
+    neox_args.eod_mask_loss = True
 
     tokens, labels, loss_mask, attention_mask, position_ids = training._get_batch(
-        neox_args=_neox_args(enabled=False),
-        tokenizer=SimpleNamespace(eod=-1),
+        neox_args=neox_args,
+        tokenizer=neox_args.tokenizer,
         keys=["text"],
         data=data,
         datatype=torch.int64,
     )
 
-    assert calls == [(["text"], torch.int64)]
-    assert tokens.shape == labels.shape == loss_mask.shape == position_ids.shape == (
-        2,
-        4,
+    assert local_broadcast == [(["text"], torch.int64)]
+    assert torch.equal(tokens, torch.tensor([[0, 1, 2, 3], [5, 6, 7, 8]]))
+    assert torch.equal(labels, torch.tensor([[1, 2, 3, 4], [6, 7, 8, 9]]))
+    assert torch.equal(
+        loss_mask,
+        torch.tensor([[1.0, 1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 1.0]]),
     )
     assert torch.equal(
         position_ids,
         torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]]),
     )
-    assert attention_mask.shape == (1, 1, 4, 4)
+    assert torch.equal(
+        attention_mask,
+        torch.tensor(
+            [
+                [
+                    [
+                        [False, True, True, True],
+                        [False, False, True, True],
+                        [False, False, False, True],
+                        [False, False, False, False],
+                    ]
+                ]
+            ]
+        ),
+    )
 
 
 @pytest.mark.cpu
@@ -186,186 +170,6 @@ def test_get_batch_sequential_preserves_packed_mask_sentinel(monkeypatch):
     result = training.get_batch_sequential(forward_input, _neox_args())
 
     assert result is forward_input
-
-
-@pytest.mark.cpu
-def test_flatten_packed_sequence_tensors_preserves_row_major_alignment():
-    tokens = torch.tensor([[10, 11, 12], [20, 21, 22]])
-    labels = torch.tensor([[11, 12, 13], [21, 22, 23]])
-    loss_mask = torch.tensor([[1.0, 0.0, 1.0], [0.0, 1.0, 1.0]])
-    position_ids = torch.arange(3).unsqueeze(0).expand(2, -1)
-
-    flat_tokens, flat_labels, flat_loss_mask, flat_position_ids = (
-        training._flatten_packed_sequence_tensors(
-            tokens, labels, loss_mask, position_ids
-        )
-    )
-
-    assert torch.equal(flat_tokens, torch.tensor([[10, 11, 12, 20, 21, 22]]))
-    assert torch.equal(flat_labels, torch.tensor([[11, 12, 13, 21, 22, 23]]))
-    assert torch.equal(
-        flat_loss_mask, torch.tensor([[1.0, 0.0, 1.0, 0.0, 1.0, 1.0]])
-    )
-    assert torch.equal(
-        flat_position_ids, torch.tensor([[0, 1, 2, 0, 1, 2]])
-    )
-    assert all(
-        tensor.shape == (1, 6) and tensor.is_contiguous()
-        for tensor in (
-            flat_tokens,
-            flat_labels,
-            flat_loss_mask,
-            flat_position_ids,
-        )
-    )
-
-
-@pytest.mark.cpu
-def test_get_packed_sequence_position_ids_restart_at_document_boundaries():
-    document_lengths = torch.tensor([1, 2, 3, 4, 2], dtype=torch.int32)
-
-    position_ids = training._get_packed_sequence_position_ids(
-        document_lengths, total_tokens=12
-    )
-
-    assert torch.equal(
-        position_ids,
-        torch.tensor([[0, 0, 1, 0, 1, 2, 0, 1, 2, 3, 0, 1]]),
-    )
-    assert position_ids.shape == (1, 12)
-    assert position_ids.dtype == torch.int64
-    assert position_ids.is_contiguous()
-
-
-@pytest.mark.cpu
-def test_get_packed_sequence_position_ids_handles_one_token_documents():
-    document_lengths = torch.tensor([1, 1, 2], dtype=torch.int32)
-
-    position_ids = training._get_packed_sequence_position_ids(
-        document_lengths, total_tokens=4
-    )
-
-    assert torch.equal(position_ids, torch.tensor([[0, 0, 0, 1]]))
-
-
-@pytest.mark.cpu
-def test_get_packed_sequence_document_lengths_removes_collation_padding():
-    cu_seqlens = torch.tensor(
-        [
-            [0, 1, 3, 6, 6, 6, 6],
-            [0, 4, 6, 6, 6, 6, 6],
-        ],
-        dtype=torch.int32,
-    )
-
-    document_lengths = training._get_packed_sequence_document_lengths(cu_seqlens)
-
-    assert torch.equal(
-        document_lengths, torch.tensor([1, 2, 3, 4, 2], dtype=torch.int32)
-    )
-
-
-@pytest.mark.cpu
-def test_get_packed_sequence_document_lengths_preserves_single_document_samples():
-    cu_seqlens = torch.tensor(
-        [
-            [0, 4, 4, 4, 4],
-            [0, 2, 4, 4, 4],
-        ],
-        dtype=torch.int32,
-    )
-
-    document_lengths = training._get_packed_sequence_document_lengths(cu_seqlens)
-
-    assert torch.equal(
-        document_lengths, torch.tensor([4, 2, 2], dtype=torch.int32)
-    )
-
-
-@pytest.mark.cpu
-def test_merge_packed_sequence_metadata_builds_microbatch_boundaries():
-    document_lengths = torch.tensor([1, 2, 3, 4, 2], dtype=torch.int32)
-    max_seqlen = torch.tensor([3, 4], dtype=torch.int32)
-
-    merged_cu_seqlens, microbatch_max_seqlen = (
-        training._merge_packed_sequence_metadata(document_lengths, max_seqlen)
-    )
-
-    assert torch.equal(
-        merged_cu_seqlens,
-        torch.tensor([0, 1, 3, 6, 10, 12], dtype=torch.int32),
-    )
-    assert merged_cu_seqlens.dtype == torch.int32
-    assert microbatch_max_seqlen.dim() == 0
-    assert microbatch_max_seqlen.dtype == torch.int32
-    assert microbatch_max_seqlen == document_lengths.max()
-
-
-@pytest.mark.cpu
-def test_merge_packed_sequence_metadata_handles_one_sample():
-    document_lengths = torch.tensor([2, 2], dtype=torch.int32)
-    max_seqlen = torch.tensor([2], dtype=torch.int32)
-
-    merged_cu_seqlens, microbatch_max_seqlen = (
-        training._merge_packed_sequence_metadata(document_lengths, max_seqlen)
-    )
-
-    assert torch.equal(
-        merged_cu_seqlens, torch.tensor([0, 2, 4], dtype=torch.int32)
-    )
-    assert microbatch_max_seqlen == 2
-
-
-@pytest.mark.cpu
-def test_pad_packed_sequence_metadata_uses_fixed_transport_shape():
-    many_documents = torch.tensor(
-        [0, 1, 3, 6, 10, 12], dtype=torch.int32
-    )
-    few_documents = torch.tensor([0, 6, 12], dtype=torch.int32)
-
-    padded_many, many_count = training._pad_packed_sequence_metadata(
-        many_documents, batch_size=2, sequence_length=6
-    )
-    padded_few, few_count = training._pad_packed_sequence_metadata(
-        few_documents, batch_size=2, sequence_length=6
-    )
-
-    assert padded_many.shape == padded_few.shape == (13,)
-    assert torch.equal(
-        padded_many,
-        torch.tensor(
-            [0, 1, 3, 6, 10, 12, 12, 12, 12, 12, 12, 12, 12],
-            dtype=torch.int32,
-        ),
-    )
-    assert torch.equal(
-        padded_few,
-        torch.tensor(
-            [0, 6, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12],
-            dtype=torch.int32,
-        ),
-    )
-    assert padded_many.dtype == padded_few.dtype == torch.int32
-    assert many_count.shape == few_count.shape == ()
-    assert many_count.dtype == few_count.dtype == torch.int32
-    assert many_count == 5
-    assert few_count == 2
-    assert torch.equal(padded_many[: many_count + 1], many_documents)
-    assert torch.equal(padded_few[: few_count + 1], few_documents)
-
-
-@pytest.mark.cpu
-def test_pad_packed_sequence_metadata_handles_maximum_document_count():
-    merged_cu_seqlens = torch.arange(13, dtype=torch.int32)
-
-    padded_cu_seqlens, num_documents = (
-        training._pad_packed_sequence_metadata(
-            merged_cu_seqlens, batch_size=2, sequence_length=6
-        )
-    )
-
-    assert torch.equal(padded_cu_seqlens, merged_cu_seqlens)
-    assert num_documents == 12
 
 
 @pytest.mark.cpu

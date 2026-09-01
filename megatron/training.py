@@ -53,6 +53,7 @@ from megatron.data.data_utils import (
     build_train_valid_test_data_loaders,
     shift_and_wrap_data_loaders,
 )
+from megatron.data.packed_sequence import normalize_packed_sequence_batch
 from megatron.initialize import initialize_megatron
 from megatron.learning_rates import AnnealingLR
 from megatron.logging import tb_wandb_log, training_log
@@ -392,202 +393,6 @@ def _broadcast_packed_sequence_metadata(neox_args, data, text):
     return cu_seqlens, max_seqlen
 
 
-def _get_packed_sequence_document_lengths(cu_seqlens):
-    """Recover real document lengths from fixed-width collated boundaries.
-
-    For example, two samples of length six may be collated as::
-
-        cu_seqlens = [
-            [0, 1, 3, 6, 6, 6, 6],
-            [0, 4, 6, 6, 6, 6, 6],
-        ]
-
-    Adjacent differences produce ``[[1, 2, 3, 0, 0, 0],
-    [4, 2, 0, 0, 0, 0]]``. Flattening in row-major order and removing the
-    zero-length collation padding returns ``[1, 2, 3, 4, 2]``: all document
-    lengths from sample zero followed by all document lengths from sample one.
-
-    Args:
-        cu_seqlens: An int32 tensor with shape ``[B, S + 1]``.
-
-    Returns:
-        A contiguous int32 tensor containing the positive document lengths in
-        microbatch token order.
-    """
-    document_lengths_by_sample = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
-
-    # The dataset pads each row by repeating its terminal offset. Adjacent
-    # differences turn those entries into zeros. Boolean indexing removes them
-    # while preserving the row-major order of documents across the microbatch.
-    document_lengths = document_lengths_by_sample.reshape(-1)
-    return document_lengths[document_lengths > 0].contiguous()
-
-
-def _merge_packed_sequence_metadata(document_lengths, max_seqlen):
-    """Merge ordered document lengths into microbatch-wide packed metadata.
-
-    For document lengths ``[1, 2, 3, 4, 2]`` from two samples of length six,
-    the cumulative result is ``[0, 1, 3, 6, 10, 12]``. The sample join at
-    offset six appears only once. Per-sample maximums such as ``[3, 4]`` are
-    reduced to the scalar microbatch maximum ``4``.
-
-    Args:
-        document_lengths: Positive int32 lengths in microbatch token order.
-        max_seqlen: Per-sample int32 maximums with shape ``[B]``.
-
-    Returns:
-        The unpadded merged cumulative boundaries and scalar maximum length.
-    """
-    merged_cu_seqlens = torch.cat(
-        [
-            document_lengths.new_zeros(1),
-            document_lengths.cumsum(dim=0, dtype=document_lengths.dtype),
-        ]
-    )
-    return merged_cu_seqlens, max_seqlen.max()
-
-
-def _pad_packed_sequence_metadata(
-    merged_cu_seqlens, batch_size, sequence_length
-):
-    """Pad merged boundaries to a fixed shape for pipeline transport.
-
-    DeepSpeed caches pipeline activation shapes when dynamic shapes are
-    disabled. The real number of document boundaries varies by microbatch, so
-    repeat the terminal boundary until every microbatch has the maximum shape
-    ``[B * S + 1]``. ``num_documents`` records how much of the tensor is real.
-
-    For ``B = 2`` and ``S = 6``, merged boundaries
-    ``[0, 1, 3, 6, 10, 12]`` become::
-
-        [0, 1, 3, 6, 10, 12, 12, 12, 12, 12, 12, 12, 12]
-
-    and ``num_documents`` is the scalar ``5``.
-
-    Args:
-        merged_cu_seqlens: Unpadded int32 boundaries with shape ``[D + 1]``.
-        batch_size: Runtime microbatch size ``B``.
-        sequence_length: Per-sample input-token length ``S``.
-
-    Returns:
-        Fixed-width int32 boundaries and a scalar int32 document count.
-    """
-    assert merged_cu_seqlens.dim() == 1
-    assert merged_cu_seqlens.numel() > 0
-
-    transport_length = batch_size * sequence_length + 1
-    padding_length = transport_length - merged_cu_seqlens.numel()
-    assert padding_length >= 0
-
-    padded_cu_seqlens = torch.cat(
-        [merged_cu_seqlens, merged_cu_seqlens[-1:].expand(padding_length)]
-    )
-    num_documents = merged_cu_seqlens.new_tensor(
-        merged_cu_seqlens.numel() - 1
-    )
-    return padded_cu_seqlens, num_documents
-
-
-def _flatten_packed_sequence_tensors(tokens, labels, loss_mask, position_ids):
-    """Flatten sequence-aligned tensors into microbatch packed-token order.
-
-    Reshaping ``[[t00, t01], [t10, t11]]`` produces
-    ``[[t00, t01, t10, t11]]``. Applying the same row-major transformation to
-    inputs, targets, loss weights, and positions keeps every token aligned with
-    its corresponding training metadata.
-
-    Args:
-        tokens: Input token IDs with shape ``[B, S]``.
-        labels: Target token IDs with shape ``[B, S]``.
-        loss_mask: Per-token loss weights with shape ``[B, S]``.
-        position_ids: Per-token positions with shape ``[B, S]``.
-
-    Returns:
-        The four contiguous tensors, each with shape ``[1, B * S]``.
-    """
-    return tuple(
-        tensor.reshape(1, -1).contiguous()
-        for tensor in (tokens, labels, loss_mask, position_ids)
-    )
-
-
-def _get_packed_sequence_position_ids(document_lengths, total_tokens):
-    """Build position IDs that restart at every packed document boundary.
-
-    Explanation of working:
-
-    Consider five documents with a total of twelve tokens::
-
-        document_lengths = [1, 2, 3, 4, 2]
-
-    Cumulative sums of all but the final length, with an initial zero, give
-    each document's start in the flattened token stream::
-
-        document_starts = [0, 1, 3, 6, 10]
-
-    Repeating each start by its corresponding document length associates every
-    token with the start of the document containing it::
-
-        token_document_starts = [0, 1, 1, 3, 3, 3, 6, 6, 6, 6, 10, 10]
-
-    The global offsets for the twelve packed tokens are::
-
-        token_offsets = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
-
-    Subtracting the document start from each global offset produces positions
-    that restart from zero at every document boundary::
-
-        position_ids = [[0, 0, 1, 0, 1, 2, 0, 1, 2, 3, 0, 1]]
-
-    Args:
-        document_lengths: Positive int32 lengths in packed-token order.
-        total_tokens: Expected number of tokens across the microbatch.
-
-    Returns:
-        Contiguous int64 position IDs with shape ``[1, total_tokens]``.
-    """
-    assert document_lengths.dim() == 1
-    assert document_lengths.numel() > 0
-
-    document_starts = torch.cat(
-        [
-            document_lengths.new_zeros(1, dtype=torch.long),
-            document_lengths[:-1].cumsum(dim=0, dtype=torch.long),
-        ]
-    )
-    token_document_starts = torch.repeat_interleave(
-        document_starts,
-        document_lengths,
-        output_size=total_tokens,
-    )
-    token_offsets = torch.arange(
-        total_tokens, dtype=torch.long, device=document_lengths.device
-    )
-    return (token_offsets - token_document_starts).unsqueeze(0).contiguous()
-
-
-def _get_packed_sequence_masks(tokens, eod_token, eod_mask_loss):
-    """Build packed loss weights without allocating a dense attention mask.
-
-    Packed attention derives causality and document isolation from
-    ``cu_seqlens``, so the normal ``[1, 1, S, S]`` boolean mask is unnecessary.
-    A fixed one-element boolean tensor acts as the tensor-only placeholder that
-    DeepSpeed can carry through pipeline communication and checkpointing.
-
-    The loss mask preserves the normal batch path: every token starts with
-    weight one, and EOD positions are set to zero when ``eod_mask_loss`` is
-    enabled. The caller subsequently combines it with the label validity mask.
-
-    Returns:
-        The boolean attention-mask sentinel and float32 per-token loss mask.
-    """
-    attention_mask = tokens.new_zeros(1, dtype=torch.bool)
-    loss_mask = torch.ones(tokens.size(), dtype=torch.float, device=tokens.device)
-    if eod_mask_loss:
-        loss_mask[tokens == eod_token] = 0.0
-    return attention_mask, loss_mask
-
-
 def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False):
     """Support function for get_batch / get_batch pipe (to avoid code repetition)"""
     data_b = mpu.broadcast_data(keys, data, datatype)
@@ -598,18 +403,6 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False
     cu_seqlens, max_seqlen = _broadcast_packed_sequence_metadata(
         neox_args, data, tokens_
     )
-    if cu_seqlens is not None:
-        document_lengths = _get_packed_sequence_document_lengths(cu_seqlens)
-        merged_cu_seqlens, max_seqlen = _merge_packed_sequence_metadata(
-            document_lengths, max_seqlen
-        )
-        cu_seqlens, num_documents = _pad_packed_sequence_metadata(
-            merged_cu_seqlens,
-            batch_size=tokens_.size(0),
-            sequence_length=neox_args.seq_length,
-        )
-        # Step 4 will add cu_seqlens, num_documents, and max_seqlen to the
-        # pipeline state consumed by each attention stage.
     if label_key in data_b:
         label_mask = (data_b[label_key].long() >= 0)[:, 1:].contiguous()
         labels = torch.where(
@@ -624,16 +417,26 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False
             labels = labels * label_mask
     tokens = tokens_[:, :-1].contiguous()
 
-    # Get the masks and position ids.
     if cu_seqlens is not None:
-        attention_mask, loss_mask = _get_packed_sequence_masks(
+        packed_batch = normalize_packed_sequence_batch(
             tokens=tokens,
+            labels=labels,
+            label_mask=label_mask,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=max_seqlen,
             eod_token=neox_args.tokenizer.eod,
             eod_mask_loss=neox_args.eod_mask_loss,
         )
-        position_ids = _get_packed_sequence_position_ids(
-            document_lengths, total_tokens=tokens.numel()
-        ).view_as(tokens)
+        tokens = packed_batch.tokens
+        labels = packed_batch.labels
+        loss_mask = packed_batch.loss_mask
+        attention_mask = packed_batch.attention_mask
+        position_ids = packed_batch.position_ids
+        cu_seqlens = packed_batch.cu_seqlens
+        num_documents = packed_batch.num_documents
+        max_seqlen = packed_batch.max_seqlen
+        # Step 4 will add cu_seqlens, num_documents, and max_seqlen to the
+        # pipeline state consumed by each attention stage.
     else:
         attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
             data=tokens,
@@ -642,14 +445,8 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False
             sliding_window_width=neox_args.sliding_window_width,
         )
 
-    # Combine EOD loss masking with the validity mask from token/label data.
-    loss_mask = label_mask.to(loss_mask.dtype) * loss_mask
-    if cu_seqlens is not None:
-        tokens, labels, loss_mask, position_ids = (
-            _flatten_packed_sequence_tensors(
-                tokens, labels, loss_mask, position_ids
-            )
-        )
+        # Combine EOD masking with the validity mask from token/label data.
+        loss_mask = label_mask.to(loss_mask.dtype) * loss_mask
     return tokens, labels, loss_mask, attention_mask, position_ids
 
 
