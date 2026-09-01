@@ -91,7 +91,7 @@ def test_get_batch_flattens_sequence_aligned_tensors_when_enabled(monkeypatch):
     )
     assert torch.equal(loss_mask, torch.ones((1, 8)))
     assert torch.equal(
-        position_ids, torch.tensor([[0, 1, 2, 3, 0, 1, 2, 3]])
+        position_ids, torch.tensor([[0, 1, 0, 1, 0, 1, 2, 3]])
     )
 
 
@@ -118,6 +118,10 @@ def test_get_batch_does_not_broadcast_metadata_when_disabled(monkeypatch):
     assert tokens.shape == labels.shape == loss_mask.shape == position_ids.shape == (
         2,
         4,
+    )
+    assert torch.equal(
+        position_ids,
+        torch.tensor([[0, 1, 2, 3], [0, 1, 2, 3]]),
     )
 
 
@@ -151,6 +155,34 @@ def test_flatten_packed_sequence_tensors_preserves_row_major_alignment():
             flat_position_ids,
         )
     )
+
+
+@pytest.mark.cpu
+def test_get_packed_sequence_position_ids_restart_at_document_boundaries():
+    document_lengths = torch.tensor([1, 2, 3, 4, 2], dtype=torch.int32)
+
+    position_ids = training._get_packed_sequence_position_ids(
+        document_lengths, total_tokens=12
+    )
+
+    assert torch.equal(
+        position_ids,
+        torch.tensor([[0, 0, 1, 0, 1, 2, 0, 1, 2, 3, 0, 1]]),
+    )
+    assert position_ids.shape == (1, 12)
+    assert position_ids.dtype == torch.int64
+    assert position_ids.is_contiguous()
+
+
+@pytest.mark.cpu
+def test_get_packed_sequence_position_ids_handles_one_token_documents():
+    document_lengths = torch.tensor([1, 1, 2], dtype=torch.int32)
+
+    position_ids = training._get_packed_sequence_position_ids(
+        document_lengths, total_tokens=4
+    )
+
+    assert torch.equal(position_ids, torch.tensor([[0, 0, 0, 1]]))
 
 
 @pytest.mark.cpu

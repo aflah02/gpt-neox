@@ -511,6 +511,61 @@ def _flatten_packed_sequence_tensors(tokens, labels, loss_mask, position_ids):
     )
 
 
+def _get_packed_sequence_position_ids(document_lengths, total_tokens):
+    """Build position IDs that restart at every packed document boundary.
+
+    Explanation of working:
+
+    Consider five documents with a total of twelve tokens::
+
+        document_lengths = [1, 2, 3, 4, 2]
+
+    Cumulative sums of all but the final length, with an initial zero, give
+    each document's start in the flattened token stream::
+
+        document_starts = [0, 1, 3, 6, 10]
+
+    Repeating each start by its corresponding document length associates every
+    token with the start of the document containing it::
+
+        token_document_starts = [0, 1, 1, 3, 3, 3, 6, 6, 6, 6, 10, 10]
+
+    The global offsets for the twelve packed tokens are::
+
+        token_offsets = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+
+    Subtracting the document start from each global offset produces positions
+    that restart from zero at every document boundary::
+
+        position_ids = [[0, 0, 1, 0, 1, 2, 0, 1, 2, 3, 0, 1]]
+
+    Args:
+        document_lengths: Positive int32 lengths in packed-token order.
+        total_tokens: Expected number of tokens across the microbatch.
+
+    Returns:
+        Contiguous int64 position IDs with shape ``[1, total_tokens]``.
+    """
+    assert document_lengths.dim() == 1
+    assert document_lengths.numel() > 0
+
+    document_starts = torch.cat(
+        [
+            document_lengths.new_zeros(1, dtype=torch.long),
+            document_lengths[:-1].cumsum(dim=0, dtype=torch.long),
+        ]
+    )
+    token_document_starts = torch.repeat_interleave(
+        document_starts,
+        document_lengths,
+        output_size=total_tokens,
+    )
+    token_offsets = torch.arange(
+        total_tokens, dtype=torch.long, device=document_lengths.device
+    )
+    return (token_offsets - token_document_starts).unsqueeze(0).contiguous()
+
+
 def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False):
     """Support function for get_batch / get_batch pipe (to avoid code repetition)"""
     data_b = mpu.broadcast_data(keys, data, datatype)
@@ -558,6 +613,9 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False
     # combine loss masks from get_ltor_masks_and_position_ids with loss masks from data
     loss_mask = label_mask.to(loss_mask.dtype) * loss_mask
     if cu_seqlens is not None:
+        position_ids = _get_packed_sequence_position_ids(
+            document_lengths, total_tokens=tokens.numel()
+        ).view_as(tokens)
         tokens, labels, loss_mask, position_ids = (
             _flatten_packed_sequence_tensors(
                 tokens, labels, loss_mask, position_ids
