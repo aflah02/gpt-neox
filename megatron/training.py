@@ -357,9 +357,7 @@ def _broadcast_packed_sequence_metadata(neox_args, data, text):
     if not neox_args.inter_document_attention_masking:
         return None, None
 
-    metadata = mpu.broadcast_data(
-        ["cu_seqlens", "max_seqlen"], data, torch.int32
-    )
+    metadata = mpu.broadcast_data(["cu_seqlens", "max_seqlen"], data, torch.int32)
     cu_seqlens = metadata["cu_seqlens"]
     max_seqlen = metadata["max_seqlen"]
 
@@ -394,6 +392,37 @@ def _broadcast_packed_sequence_metadata(neox_args, data, text):
     return cu_seqlens, max_seqlen
 
 
+def _get_packed_sequence_document_lengths(cu_seqlens):
+    """Recover real document lengths from fixed-width collated boundaries.
+
+    For example, two samples of length six may be collated as::
+
+        cu_seqlens = [
+            [0, 1, 3, 6, 6, 6, 6],
+            [0, 4, 6, 6, 6, 6, 6],
+        ]
+
+    Adjacent differences produce ``[[1, 2, 3, 0, 0, 0],
+    [4, 2, 0, 0, 0, 0]]``. Flattening in row-major order and removing the
+    zero-length collation padding returns ``[1, 2, 3, 4, 2]``: all document
+    lengths from sample zero followed by all document lengths from sample one.
+
+    Args:
+        cu_seqlens: An int32 tensor with shape ``[B, S + 1]``.
+
+    Returns:
+        A contiguous int32 tensor containing the positive document lengths in
+        microbatch token order.
+    """
+    document_lengths_by_sample = cu_seqlens[:, 1:] - cu_seqlens[:, :-1]
+
+    # The dataset pads each row by repeating its terminal offset. Adjacent
+    # differences turn those entries into zeros. Boolean indexing removes them
+    # while preserving the row-major order of documents across the microbatch.
+    document_lengths = document_lengths_by_sample.reshape(-1)
+    return document_lengths[document_lengths > 0].contiguous()
+
+
 def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False):
     """Support function for get_batch / get_batch pipe (to avoid code repetition)"""
     data_b = mpu.broadcast_data(keys, data, datatype)
@@ -401,9 +430,11 @@ def _get_batch(neox_args, tokenizer, keys, data, datatype, label_mask_zero=False
     label_key = keys[1] if len(keys) > 1 else None
     # Unpack.
     tokens_ = data_b[token_key].long()
-    # Step 3.1 deliberately leaves _get_batch's return contract unchanged.
-    # Step 3.2 will retain and normalize these validated sidecar tensors.
-    _broadcast_packed_sequence_metadata(neox_args, data, tokens_)
+    cu_seqlens, _ = _broadcast_packed_sequence_metadata(neox_args, data, tokens_)
+    if cu_seqlens is not None:
+        # Step 3.3 will consume these ordered lengths when it builds the merged
+        # microbatch-wide cumulative boundaries.
+        _get_packed_sequence_document_lengths(cu_seqlens)
     if label_key in data_b:
         label_mask = (data_b[label_key].long() >= 0)[:, 1:].contiguous()
         labels = torch.where(

@@ -88,6 +88,40 @@ def test_get_batch_does_not_broadcast_metadata_when_disabled(monkeypatch):
 
 
 @pytest.mark.cpu
+def test_get_packed_sequence_document_lengths_removes_collation_padding():
+    cu_seqlens = torch.tensor(
+        [
+            [0, 1, 3, 6, 6, 6, 6],
+            [0, 4, 6, 6, 6, 6, 6],
+        ],
+        dtype=torch.int32,
+    )
+
+    document_lengths = training._get_packed_sequence_document_lengths(cu_seqlens)
+
+    assert torch.equal(
+        document_lengths, torch.tensor([1, 2, 3, 4, 2], dtype=torch.int32)
+    )
+
+
+@pytest.mark.cpu
+def test_get_packed_sequence_document_lengths_preserves_single_document_samples():
+    cu_seqlens = torch.tensor(
+        [
+            [0, 4, 4, 4, 4],
+            [0, 2, 4, 4, 4],
+        ],
+        dtype=torch.int32,
+    )
+
+    document_lengths = training._get_packed_sequence_document_lengths(cu_seqlens)
+
+    assert torch.equal(
+        document_lengths, torch.tensor([4, 2, 2], dtype=torch.int32)
+    )
+
+
+@pytest.mark.cpu
 @pytest.mark.parametrize(
     ("field", "value", "error"),
     [
