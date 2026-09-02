@@ -321,7 +321,7 @@ def test_te_attention_dispatches_packed_thd_without_mutating_fixed_format(
 
     monkeypatch.setattr(te.pytorch.MultiheadAttention, "forward", te_forward)
 
-    hidden_states = torch.zeros((5, 1, 4))
+    hidden_states = torch.zeros((5, 1, 4), dtype=torch.bfloat16)
     attention_mask = torch.zeros(1, dtype=torch.bool)
     padded_cu_seqlens = torch.tensor(
         [0, 2, 5, 5, 5, 5], dtype=torch.int32
@@ -335,12 +335,13 @@ def test_te_attention_dispatches_packed_thd_without_mutating_fixed_format(
         is_first_microbatch=True,
     )
 
-    packed_module, _, packed_mask, packed_kwargs = calls.pop(0)
+    packed_module, packed_hidden_states, packed_mask, packed_kwargs = calls.pop(0)
     assert packed_module is not attention
     assert packed_module.probe is attention.probe
     assert packed_module.qkv_format == "thd"
     assert attention.qkv_format == "sbhd"
     assert packed_mask is None
+    assert packed_hidden_states.dtype == torch.bfloat16
     assert packed_output.shape == hidden_states.shape
     assert packed_bias is attention.probe
     assert packed_kwargs["attn_mask_type"] == "padding_causal"
@@ -350,10 +351,13 @@ def test_te_attention_dispatches_packed_thd_without_mutating_fixed_format(
         torch.tensor([0, 2, 5], dtype=torch.int32),
     )
     assert packed_kwargs["cu_seqlens_kv"] is packed_kwargs["cu_seqlens_q"]
+    assert packed_kwargs["cu_seqlens_q"].dtype == torch.int32
     assert packed_kwargs["max_seqlen_q"] == 3
     assert packed_kwargs["max_seqlen_kv"] == 3
+    assert isinstance(packed_kwargs["max_seqlen_q"], int)
     assert packed_kwargs["core_attention_bias_type"] == "alibi"
     assert torch.equal(packed_kwargs["alibi_slopes"], torch.tensor([0.5]))
+    assert packed_kwargs["alibi_slopes"].dtype == torch.float32
     assert packed_kwargs["is_first_microbatch"] is True
 
     fixed_output, fixed_bias = attention(hidden_states, attention_mask)
@@ -408,15 +412,18 @@ def test_te_attention_rejects_kv_cache_for_packed_execution():
         )
 
 
-def _make_cuda_te_attention(mode, max_seq_len=3):
+def _make_cuda_te_attention(mode, max_seq_len=3, num_gqa_groups=None):
     from megatron.model.transformer_engine import TEMultiheadAttention, te
 
     window_size = (1, 0) if mode == "sliding-window" else None
+    num_attention_heads = 4 if num_gqa_groups is not None else 2
+    head_dim = 32 // num_attention_heads
     attention = TEMultiheadAttention.__new__(TEMultiheadAttention)
     te.pytorch.MultiheadAttention.__init__(
         attention,
         hidden_size=32,
-        num_attention_heads=2,
+        num_attention_heads=num_attention_heads,
+        num_gqa_groups=num_gqa_groups,
         attention_dropout=0.0,
         params_dtype=torch.bfloat16,
         device="cuda",
@@ -432,7 +439,7 @@ def _make_cuda_te_attention(mode, max_seq_len=3):
     attention.packed_window_size = window_size
 
     if mode.startswith("rotary"):
-        rotary_dim = 8 if mode == "rotary-partial" else 16
+        rotary_dim = head_dim // 2 if mode == "rotary-partial" else head_dim
         attention.rope_emb = RotaryEmbedding(
             rotary_dim,
             max_seq_len=max_seq_len,
@@ -440,7 +447,10 @@ def _make_cuda_te_attention(mode, max_seq_len=3):
         ).get_emb()
     elif mode == "alibi":
         attention.alibi_embed = SimpleNamespace(
-            slopes=torch.tensor([0.5, 0.25], device="cuda")
+            slopes=torch.tensor(
+                [0.5 ** (index + 1) for index in range(num_attention_heads)],
+                device="cuda",
+            )
         )
 
     attention.train()
@@ -452,11 +462,16 @@ def _make_cuda_te_attention(mode, max_seq_len=3):
     "mode",
     ["learned", "rotary-full", "rotary-partial", "alibi", "sliding-window"],
 )
-def test_te_packed_thd_matches_per_document_reference(mode):
+@pytest.mark.parametrize(
+    "num_gqa_groups",
+    [None, 2],
+    ids=["mha", "gqa"],
+)
+def test_te_packed_thd_matches_per_document_reference(mode, num_gqa_groups):
     pytest.importorskip("transformer_engine")
 
     torch.manual_seed(1234)
-    attention = _make_cuda_te_attention(mode)
+    attention = _make_cuda_te_attention(mode, num_gqa_groups=num_gqa_groups)
     boundaries = (0, 64, 128) if mode == "alibi" else (0, 2, 5)
     total_tokens = boundaries[-1]
     max_seqlen = max(end - start for start, end in zip(boundaries[:-1], boundaries[1:]))
@@ -477,6 +492,8 @@ def test_te_packed_thd_matches_per_document_reference(mode):
             * 0.2
         ).requires_grad_()
         gradient_targets = (hidden_states,)
+    attention_parameters = tuple(attention.parameters())
+    gradient_targets += attention_parameters
 
     attention_mask = torch.zeros(1, dtype=torch.bool, device="cuda")
     packed_output, packed_bias = attention(
@@ -505,11 +522,21 @@ def test_te_packed_thd_matches_per_document_reference(mode):
         (packed_output.float() * probe.float()).sum(),
         gradient_targets,
         retain_graph=True,
+        allow_unused=True,
     )
     reference_grads = torch.autograd.grad(
-        (reference_output.float() * probe.float()).sum(), gradient_targets
+        (reference_output.float() * probe.float()).sum(),
+        gradient_targets,
+        allow_unused=True,
+    )
+    assert any(
+        gradient is not None
+        for gradient in packed_grads[-len(attention_parameters) :]
     )
     for packed_grad, reference_grad in zip(packed_grads, reference_grads):
+        if packed_grad is None or reference_grad is None:
+            assert packed_grad is reference_grad
+            continue
         torch.testing.assert_close(packed_grad, reference_grad, atol=2e-2, rtol=2e-2)
 
     changed_first_document = hidden_states.detach().clone()
@@ -608,6 +635,75 @@ def test_te_fixed_evaluation_is_unchanged_after_packed_training_forward():
     assert tuple(attention.state_dict()) == parameter_names
     torch.testing.assert_close(output, reference_output, atol=0, rtol=0)
     torch.testing.assert_close(bias, reference_bias, atol=0, rtol=0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_te_packed_checkpointing_handles_consecutive_microbatches():
+    pytest.importorskip("transformer_engine")
+
+    torch.manual_seed(1234)
+    attention = _make_cuda_te_attention("rotary-partial", max_seq_len=4)
+    attention_mask = torch.zeros(1, dtype=torch.bool, device="cuda")
+    microbatch_boundaries = ((0, 2, 5), (0, 1, 2, 6))
+
+    for boundaries in microbatch_boundaries:
+        total_tokens = boundaries[-1]
+        max_seqlen = max(
+            end - start for start, end in zip(boundaries[:-1], boundaries[1:])
+        )
+        hidden_states = torch.randn(
+            (total_tokens, 1, 32),
+            device="cuda",
+            dtype=torch.bfloat16,
+            requires_grad=True,
+        )
+        cu_seqlens = torch.tensor(
+            boundaries,
+            dtype=torch.int32,
+            device="cuda",
+        )
+        num_documents = torch.tensor(
+            len(boundaries) - 1,
+            dtype=torch.int32,
+            device="cuda",
+        )
+        max_seqlen_tensor = torch.tensor(
+            max_seqlen,
+            dtype=torch.int32,
+            device="cuda",
+        )
+
+        with torch.no_grad():
+            reference_output = torch.cat(
+                [
+                    attention(hidden_states[start:end], attention_mask)[0]
+                    for start, end in zip(boundaries[:-1], boundaries[1:])
+                ]
+            )
+
+        def packed_forward(states, packed_boundaries, document_count, maximum):
+            return attention(
+                states,
+                attention_mask,
+                cu_seqlens=packed_boundaries,
+                num_documents=document_count,
+                max_seqlen=maximum,
+            )[0]
+
+        output = checkpoint(
+            packed_forward,
+            hidden_states,
+            cu_seqlens,
+            num_documents,
+            max_seqlen_tensor,
+            use_reentrant=True,
+        )
+        torch.testing.assert_close(output, reference_output, atol=1e-2, rtol=1e-2)
+
+        output.float().square().mean().backward()
+        assert hidden_states.grad is not None
+        assert torch.isfinite(hidden_states.grad).all()
+        attention.zero_grad(set_to_none=True)
 
 
 def _make_native_flash_attention(*, rotary_ndims=None):
