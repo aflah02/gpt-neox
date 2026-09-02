@@ -1161,8 +1161,9 @@ class NeoXArgsTraining(NeoXArgsTemplate):
 
     inter_document_attention_masking: bool = False
     """
-    Return document-boundary metadata from the dataloader so causal attention is
-    restricted to tokens from the same document in a packed training sample.
+    Prevent tokens in packed GPT-2 training samples from attending across
+    document boundaries. Uses native variable-length FlashAttention and resets
+    supported positional encodings at each document boundary.
     """
 
     dataset_impl: Literal["gpt2", "pairwise", "online"] = "gpt2"
