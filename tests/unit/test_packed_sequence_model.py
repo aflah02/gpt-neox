@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from functools import partial
 from types import SimpleNamespace
 
@@ -734,6 +735,98 @@ def test_packed_positional_modes_match_real_flash_attention_reference(mode):
     torch.testing.assert_close(
         evaluation_output, training_output, atol=5e-3, rtol=5e-3
     )
+
+
+def _dense_block_diagonal_attention(query, key, value, document_lengths):
+    query = query.float()
+    key = key.float()
+    value = value.float()
+    total_tokens = query.size(0)
+    document_ids = torch.repeat_interleave(
+        torch.arange(len(document_lengths), device=query.device),
+        torch.tensor(document_lengths, device=query.device),
+    )
+    document_starts = torch.repeat_interleave(
+        torch.tensor(
+            [0, *torch.tensor(document_lengths).cumsum(0)[:-1].tolist()],
+            device=query.device,
+        ),
+        torch.tensor(document_lengths, device=query.device),
+    )
+    local_positions = torch.arange(total_tokens, device=query.device) - document_starts
+    block_diagonal_causal_mask = (document_ids[:, None] == document_ids[None, :]) & (
+        local_positions[:, None] >= local_positions[None, :]
+    )
+
+    attention_scores = torch.einsum("thd,shd->hts", query, key)
+    attention_scores /= math.sqrt(query.size(-1))
+    attention_scores.masked_fill_(~block_diagonal_causal_mask.unsqueeze(0), -torch.inf)
+    attention_probs = torch.softmax(attention_scores, dim=-1)
+    return torch.einsum("hts,shd->thd", attention_probs, value)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+@pytest.mark.parametrize("tensor_parallel_size", [1, 2, 4])
+def test_packed_flash_attention_head_partitions_match_dense_reference(
+    tensor_parallel_size,
+):
+    pytest.importorskip("flash_attn")
+    torch.manual_seed(5678)
+    attention = _make_cuda_native_flash_attention("learned")
+    document_lengths = (3, 5)
+    cu_seqlens = torch.tensor([0, 3, 8], dtype=torch.int32, device="cuda")
+
+    query = (
+        torch.randn((8, 1, 4, 16), dtype=torch.float16, device="cuda") * 0.2
+    ).requires_grad_()
+    key = (
+        torch.randn((8, 1, 4, 16), dtype=torch.float16, device="cuda") * 0.2
+    ).requires_grad_()
+    value = (
+        torch.randn((8, 1, 4, 16), dtype=torch.float16, device="cuda") * 0.2
+    ).requires_grad_()
+
+    partition_outputs = [
+        attention._flash_attention_packed(
+            query_partition,
+            key_partition,
+            value_partition,
+            cu_seqlens=cu_seqlens,
+            max_seqlen=5,
+        )
+        .squeeze(0)
+        .transpose(0, 1)
+        for query_partition, key_partition, value_partition in zip(
+            query.chunk(tensor_parallel_size, dim=2),
+            key.chunk(tensor_parallel_size, dim=2),
+            value.chunk(tensor_parallel_size, dim=2),
+        )
+    ]
+    packed_output = torch.cat(partition_outputs, dim=1)
+    dense_output = _dense_block_diagonal_attention(
+        query.squeeze(1),
+        key.squeeze(1),
+        value.squeeze(1),
+        document_lengths,
+    )
+
+    torch.testing.assert_close(
+        packed_output.float(), dense_output, atol=2e-3, rtol=2e-3
+    )
+
+    probe = torch.randn_like(dense_output)
+    packed_grads = torch.autograd.grad(
+        (packed_output.float() * probe).sum(),
+        (query, key, value),
+        retain_graph=True,
+    )
+    dense_grads = torch.autograd.grad(
+        (dense_output * probe).sum(), (query, key, value)
+    )
+    for packed_grad, dense_grad in zip(packed_grads, dense_grads):
+        torch.testing.assert_close(
+            packed_grad.float(), dense_grad.float(), atol=3e-3, rtol=3e-3
+        )
 
 
 @pytest.mark.cpu

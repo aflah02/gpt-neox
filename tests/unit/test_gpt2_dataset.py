@@ -79,6 +79,23 @@ def test_inter_document_metadata_tracks_partial_document_fragments():
 
 
 @pytest.mark.cpu
+def test_inter_document_metadata_tracks_single_partial_document():
+    dataset = _build_dataset(
+        documents=[np.arange(20)],
+        sample_idx=[[0, 4], [0, 12]],
+        seq_length=8,
+    )
+
+    sample = dataset[0]
+
+    np.testing.assert_array_equal(sample["text"], np.arange(4, 13))
+    np.testing.assert_array_equal(
+        sample["cu_seqlens"], [0, 8, 8, 8, 8, 8, 8, 8, 8]
+    )
+    assert sample["max_seqlen"] == np.int32(8)
+
+
+@pytest.mark.cpu
 def test_inter_document_metadata_drops_label_only_final_fragment():
     dataset = _build_dataset(
         documents=[np.arange(8), np.arange(10, 11)],
