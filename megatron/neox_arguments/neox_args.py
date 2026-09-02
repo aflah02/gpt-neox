@@ -1162,9 +1162,9 @@ class NeoXArgsTraining(NeoXArgsTemplate):
     inter_document_attention_masking: bool = False
     """
     Prevent tokens in packed GPT-2 training samples from attending across
-    document boundaries. Uses native variable-length FlashAttention or a
-    compatible Transformer Engine THD backend and resets supported positional
-    encodings at each document boundary.
+    document boundaries. Uses native variable-length FlashAttention or BF16
+    Transformer Engine THD attention with te_mha, and resets supported
+    positional encodings at each document boundary. te_fp8_mha is not supported.
     """
 
     dataset_impl: Literal["gpt2", "pairwise", "online"] = "gpt2"

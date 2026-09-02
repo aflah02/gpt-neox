@@ -99,13 +99,13 @@ def _validate_transformer_engine_thd_support():
         te_version = packaging.version.Version(version("transformer-engine"))
     except PackageNotFoundError as error:
         raise AssertionError(
-            "inter_document_attention_masking with te_mha or te_fp8_mha "
+            "inter_document_attention_masking with te_mha "
             "requires Transformer Engine >= 1.12.0 with THD attention support, "
             "but Transformer Engine is not installed"
         ) from error
 
     assert te_version >= TRANSFORMER_ENGINE_THD_MIN_VERSION, (
-        "inter_document_attention_masking with te_mha or te_fp8_mha requires "
+        "inter_document_attention_masking with te_mha requires "
         f"Transformer Engine >= {TRANSFORMER_ENGINE_THD_MIN_VERSION} with THD "
         f"attention support; found {te_version}"
     )
@@ -1163,8 +1163,11 @@ class NeoXArgs(*BASE_CLASSES):
                 "curriculum sequence-length training"
             )
 
-            use_transformer_engine_attention = self.te_mha or self.te_fp8_mha
-            if use_transformer_engine_attention:
+            assert not self.te_fp8_mha, (
+                "inter_document_attention_masking does not currently support "
+                "te_fp8_mha"
+            )
+            if self.te_mha:
                 _validate_transformer_engine_thd_support()
                 supported_te_attention_types = {"global", "flash"}
                 unsupported_attention_types = sorted(
@@ -1182,7 +1185,7 @@ class NeoXArgs(*BASE_CLASSES):
                 ), (
                     "inter_document_attention_masking requires native "
                     "FlashAttention for every transformer layer unless te_mha "
-                    "or te_fp8_mha is enabled"
+                    "is enabled"
                 )
 
             supported_position_embedding_types = {
@@ -1221,9 +1224,7 @@ class NeoXArgs(*BASE_CLASSES):
                     self.num_kv_heads % self.model_parallel_size == 0
                 ), "Number of KV heads must be at least model_parallel_size for now!"
         # Flash attention version >=2.3.0 required to combine Flash + Sliding Window Attention
-        if "flash" in self.attention_config and not (
-            self.te_mha or self.te_fp8_mha
-        ):
+        if "flash" in self.attention_config and not self.te_mha:
             _flash_version = packaging.version.Version(version("flash-attn"))
             if self.sliding_window_width is not None:
                 assert _flash_version >= packaging.version.Version(

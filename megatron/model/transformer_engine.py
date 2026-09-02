@@ -553,7 +553,7 @@ class TEMultiheadAttention(te.pytorch.MultiheadAttention):
         self.use_cache = use_cache
         self.pos_emb = neox_args.pos_emb
         self.packed_window_size = (
-            (neox_args.sliding_window_width, -1)
+            (neox_args.sliding_window_width, 0)
             if neox_args.sliding_window_width is not None
             else None
         )

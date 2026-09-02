@@ -305,7 +305,7 @@ def test_te_attention_dispatches_packed_thd_without_mutating_fixed_format(
     attention.qkv_format = "sbhd"
     attention.use_cache = False
     attention.pos_emb = "alibi"
-    attention.packed_window_size = (3, -1)
+    attention.packed_window_size = (3, 0)
     attention.alibi_embed = SimpleNamespace(slopes=torch.tensor([0.5]))
     attention.probe = torch.nn.Parameter(torch.ones(4))
     calls = []
@@ -344,7 +344,7 @@ def test_te_attention_dispatches_packed_thd_without_mutating_fixed_format(
     assert packed_output.shape == hidden_states.shape
     assert packed_bias is attention.probe
     assert packed_kwargs["attn_mask_type"] == "padding_causal"
-    assert packed_kwargs["window_size"] == (3, -1)
+    assert packed_kwargs["window_size"] == (3, 0)
     assert torch.equal(
         packed_kwargs["cu_seqlens_q"],
         torch.tensor([0, 2, 5], dtype=torch.int32),
@@ -408,12 +408,10 @@ def test_te_attention_rejects_kv_cache_for_packed_execution():
         )
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
-def test_te_packed_thd_matches_per_document_reference():
-    pytest.importorskip("transformer_engine")
+def _make_cuda_te_attention(mode, max_seq_len=3):
     from megatron.model.transformer_engine import TEMultiheadAttention, te
 
-    torch.manual_seed(1234)
+    window_size = (1, 0) if mode == "sliding-window" else None
     attention = TEMultiheadAttention.__new__(TEMultiheadAttention)
     te.pytorch.MultiheadAttention.__init__(
         attention,
@@ -423,30 +421,74 @@ def test_te_packed_thd_matches_per_document_reference():
         params_dtype=torch.bfloat16,
         device="cuda",
         qkv_format="sbhd",
+        window_size=window_size,
         fuse_qkv_params=True,
         return_bias=True,
     )
     attention.use_cache = False
-    attention.pos_emb = "none"
-    attention.packed_window_size = None
-    attention.train()
+    attention.pos_emb = (
+        "rotary" if mode.startswith("rotary") else "alibi" if mode == "alibi" else mode
+    )
+    attention.packed_window_size = window_size
 
-    hidden_states = (
-        torch.randn((5, 1, 32), device="cuda", dtype=torch.bfloat16) * 0.2
-    ).requires_grad_()
+    if mode.startswith("rotary"):
+        rotary_dim = 8 if mode == "rotary-partial" else 16
+        attention.rope_emb = RotaryEmbedding(
+            rotary_dim,
+            max_seq_len=max_seq_len,
+            precision=torch.bfloat16,
+        ).get_emb()
+    elif mode == "alibi":
+        attention.alibi_embed = SimpleNamespace(
+            slopes=torch.tensor([0.5, 0.25], device="cuda")
+        )
+
+    attention.train()
+    return attention
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+@pytest.mark.parametrize(
+    "mode",
+    ["learned", "rotary-full", "rotary-partial", "alibi", "sliding-window"],
+)
+def test_te_packed_thd_matches_per_document_reference(mode):
+    pytest.importorskip("transformer_engine")
+
+    torch.manual_seed(1234)
+    attention = _make_cuda_te_attention(mode)
+    boundaries = (0, 64, 128) if mode == "alibi" else (0, 2, 5)
+    total_tokens = boundaries[-1]
+    max_seqlen = max(end - start for start, end in zip(boundaries[:-1], boundaries[1:]))
+
+    if mode == "learned":
+        embedding = _make_cuda_learned_embedding(dtype=torch.bfloat16)
+        token_ids = torch.zeros((1, total_tokens), dtype=torch.long, device="cuda")
+        position_ids = torch.tensor([[0, 1, 0, 1, 2]], dtype=torch.long, device="cuda")
+        hidden_states = embedding(token_ids, position_ids).transpose(0, 1)
+        gradient_targets = tuple(embedding.parameters())
+    else:
+        hidden_states = (
+            torch.randn(
+                (total_tokens, 1, 32),
+                device="cuda",
+                dtype=torch.bfloat16,
+            )
+            * 0.2
+        ).requires_grad_()
+        gradient_targets = (hidden_states,)
+
     attention_mask = torch.zeros(1, dtype=torch.bool, device="cuda")
     packed_output, packed_bias = attention(
         hidden_states,
         attention_mask,
-        cu_seqlens=torch.tensor(
-            [0, 2, 5, 5, 5, 5], dtype=torch.int32, device="cuda"
-        ),
+        cu_seqlens=torch.tensor(boundaries, dtype=torch.int32, device="cuda"),
         num_documents=torch.tensor(2, dtype=torch.int32, device="cuda"),
-        max_seqlen=torch.tensor(3, dtype=torch.int32, device="cuda"),
+        max_seqlen=torch.tensor(max_seqlen, dtype=torch.int32, device="cuda"),
     )
 
     reference_outputs = []
-    for start, end in ((0, 2), (2, 5)):
+    for start, end in zip(boundaries[:-1], boundaries[1:]):
         reference_output, reference_bias = attention(
             hidden_states[start:end], attention_mask
         )
@@ -456,22 +498,77 @@ def test_te_packed_thd_matches_per_document_reference():
 
     assert attention.qkv_format == "sbhd"
     assert packed_output.shape == hidden_states.shape
-    torch.testing.assert_close(
-        packed_output, reference_output, atol=1e-2, rtol=1e-2
-    )
+    torch.testing.assert_close(packed_output, reference_output, atol=1e-2, rtol=1e-2)
 
     probe = torch.randn_like(packed_output)
-    packed_grad = torch.autograd.grad(
+    packed_grads = torch.autograd.grad(
         (packed_output.float() * probe.float()).sum(),
-        hidden_states,
+        gradient_targets,
         retain_graph=True,
-    )[0]
-    reference_grad = torch.autograd.grad(
-        (reference_output.float() * probe.float()).sum(), hidden_states
-    )[0]
-    torch.testing.assert_close(
-        packed_grad, reference_grad, atol=2e-2, rtol=2e-2
     )
+    reference_grads = torch.autograd.grad(
+        (reference_output.float() * probe.float()).sum(), gradient_targets
+    )
+    for packed_grad, reference_grad in zip(packed_grads, reference_grads):
+        torch.testing.assert_close(packed_grad, reference_grad, atol=2e-2, rtol=2e-2)
+
+    changed_first_document = hidden_states.detach().clone()
+    changed_first_document[: boundaries[1]].add_(1.0)
+    changed_output, _ = attention(
+        changed_first_document,
+        attention_mask,
+        cu_seqlens=torch.tensor(boundaries, dtype=torch.int32, device="cuda"),
+        num_documents=torch.tensor(2, dtype=torch.int32, device="cuda"),
+        max_seqlen=torch.tensor(max_seqlen, dtype=torch.int32, device="cuda"),
+    )
+    torch.testing.assert_close(
+        changed_output[boundaries[1] :],
+        packed_output.detach()[boundaries[1] :],
+        atol=0,
+        rtol=0,
+    )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_te_partial_rotary_thd_preserves_nonrotary_suffix():
+    pytest.importorskip("transformer_engine")
+    from transformer_engine.pytorch.attention import apply_rotary_pos_emb
+
+    torch.manual_seed(1234)
+    rotary_dim = 8
+    hidden_states = torch.randn((5, 2, 16), device="cuda", dtype=torch.bfloat16)
+    rope_emb = RotaryEmbedding(
+        rotary_dim,
+        max_seq_len=3,
+        precision=torch.bfloat16,
+    ).get_emb()
+    cu_seqlens = torch.tensor([0, 2, 5], dtype=torch.int32, device="cuda")
+
+    packed_output = apply_rotary_pos_emb(
+        hidden_states,
+        rope_emb,
+        tensor_format="thd",
+        fused=True,
+        cu_seqlens=cu_seqlens,
+    )
+    reference_output = torch.cat(
+        [
+            apply_rotary_pos_emb(
+                hidden_states[start:end].unsqueeze(1),
+                rope_emb,
+                tensor_format="sbhd",
+            ).squeeze(1)
+            for start, end in ((0, 2), (2, 5))
+        ]
+    )
+
+    torch.testing.assert_close(
+        packed_output[..., :rotary_dim],
+        reference_output[..., :rotary_dim],
+        atol=1e-2,
+        rtol=1e-2,
+    )
+    assert torch.equal(packed_output[..., rotary_dim:], hidden_states[..., rotary_dim:])
 
 
 def _make_native_flash_attention(*, rotary_ndims=None):
@@ -801,14 +898,14 @@ def _make_cuda_native_flash_attention(mode):
     return attention
 
 
-def _make_cuda_learned_embedding():
+def _make_cuda_learned_embedding(dtype=torch.float16):
     embedding = Embedding.__new__(Embedding)
     torch.nn.Module.__init__(embedding)
     embedding.word_embeddings = torch.nn.Embedding(
-        2, 32, device="cuda", dtype=torch.float16
+        2, 32, device="cuda", dtype=dtype
     )
     embedding.position_embeddings = torch.nn.Embedding(
-        3, 32, device="cuda", dtype=torch.float16
+        3, 32, device="cuda", dtype=dtype
     )
     embedding.use_pos_emb = True
     embedding.embedding_type = "learned"
