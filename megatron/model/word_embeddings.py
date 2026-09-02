@@ -181,6 +181,12 @@ class EmbeddingPipe(Embedding):
         return self.word_embeddings.weight
 
     def forward(self, args):
+        assert isinstance(args, tuple) and len(args) in (3, 6), (
+            "EmbeddingPipe expects (input_ids, position_ids, attention_mask) "
+            "or (input_ids, position_ids, cu_seqlens, num_documents, "
+            f"max_seqlen, attention_mask), but got {type(args).__name__} with "
+            f"length {len(args) if isinstance(args, tuple) else 'unknown'}"
+        )
         input_ids, position_ids, *context = args
         embeddings = super().forward(input_ids, position_ids)
         return (embeddings, *context)
