@@ -81,11 +81,23 @@ def cross_entropy(output, labels, _fp16=False):
 def _pre_transformer_block(args):
     # Change hidden-state format from [b, s, h] to [s, b, h] while preserving
     # either the ordinary attention mask or the packed-sequence context.
+    assert isinstance(args, tuple) and len(args) in (2, 5), (
+        "_pre_transformer_block expects (hidden_states, attention_mask) or "
+        "(hidden_states, cu_seqlens, num_documents, max_seqlen, "
+        f"attention_mask), but got {type(args).__name__} with length "
+        f"{len(args) if isinstance(args, tuple) else 'unknown'}"
+    )
     return (args[0].transpose(0, 1).contiguous(), *args[1:])
 
 
 def _post_transformer_block(args):
     # Restore [b, s, h] and drop model context after the final transformer layer.
+    assert isinstance(args, tuple) and len(args) in (2, 5), (
+        "_post_transformer_block expects (hidden_states, attention_mask) or "
+        "(hidden_states, cu_seqlens, num_documents, max_seqlen, "
+        f"attention_mask), but got {type(args).__name__} with length "
+        f"{len(args) if isinstance(args, tuple) else 'unknown'}"
+    )
     return args[0].transpose(0, 1).contiguous()
 
 
