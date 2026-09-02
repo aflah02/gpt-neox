@@ -19,6 +19,17 @@ from typing import NamedTuple
 import torch
 
 
+class PackedSequenceModelInputs(NamedTuple):
+    """Structured view of the flat packed input accepted by the model."""
+
+    tokens: torch.Tensor
+    position_ids: torch.Tensor
+    cu_seqlens: torch.Tensor
+    num_documents: torch.Tensor
+    max_seqlen: torch.Tensor
+    attention_mask: torch.Tensor
+
+
 class PackedSequenceBatch(NamedTuple):
     """Normalized tensors and metadata for one packed microbatch."""
 
@@ -33,13 +44,13 @@ class PackedSequenceBatch(NamedTuple):
 
     def model_inputs(self):
         """Return the flat tensor-only input consumed by the model."""
-        return (
-            self.tokens,
-            self.position_ids,
-            self.cu_seqlens,
-            self.num_documents,
-            self.max_seqlen,
-            self.attention_mask,
+        return PackedSequenceModelInputs(
+            tokens=self.tokens,
+            position_ids=self.position_ids,
+            cu_seqlens=self.cu_seqlens,
+            num_documents=self.num_documents,
+            max_seqlen=self.max_seqlen,
+            attention_mask=self.attention_mask,
         )
 
     def loss_inputs(self):

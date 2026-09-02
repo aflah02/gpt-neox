@@ -55,6 +55,7 @@ from megatron.data.data_utils import (
 )
 from megatron.data.packed_sequence import (
     PackedSequenceBatch,
+    PackedSequenceModelInputs,
     normalize_packed_sequence_batch,
 )
 from megatron.initialize import initialize_megatron
@@ -583,7 +584,7 @@ def get_batch_pipe(data, neox_args, curr_scheduler=None):
 
 def get_batch_sequential(forward_input, neox_args):
     """A modification of get_batch() to work with the latest batch instead of an iterator."""
-    if isinstance(forward_input, tuple) and len(forward_input) == 6:
+    if isinstance(forward_input, PackedSequenceModelInputs):
         # Packed model inputs already contain document-local positions, metadata,
         # and the mask sentinel. Preserve the complete tensor-only context.
         return forward_input

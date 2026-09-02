@@ -18,7 +18,10 @@ import pytest
 import torch
 
 from megatron import training
-from megatron.data.packed_sequence import PackedSequenceBatch
+from megatron.data.packed_sequence import (
+    PackedSequenceBatch,
+    PackedSequenceModelInputs,
+)
 
 
 def _neox_args(enabled=True, seq_length=4):
@@ -189,13 +192,13 @@ def test_get_batch_preserves_exact_behavior_when_disabled(local_broadcast):
 
 @pytest.mark.cpu
 def test_get_batch_sequential_preserves_packed_mask_sentinel(monkeypatch):
-    forward_input = (
-        torch.tensor([[0, 1, 2, 3]]),
-        torch.tensor([[0, 1, 0, 1]]),
-        torch.tensor([0, 2, 4, 4, 4], dtype=torch.int32),
-        torch.tensor(2, dtype=torch.int32),
-        torch.tensor(2, dtype=torch.int32),
-        torch.zeros(1, dtype=torch.bool),
+    forward_input = PackedSequenceModelInputs(
+        tokens=torch.tensor([[0, 1, 2, 3]]),
+        position_ids=torch.tensor([[0, 1, 0, 1]]),
+        cu_seqlens=torch.tensor([0, 2, 4, 4, 4], dtype=torch.int32),
+        num_documents=torch.tensor(2, dtype=torch.int32),
+        max_seqlen=torch.tensor(2, dtype=torch.int32),
+        attention_mask=torch.zeros(1, dtype=torch.bool),
     )
 
     monkeypatch.setattr(
@@ -221,6 +224,7 @@ def test_get_batch_pipe_keeps_metadata_in_model_inputs(
         data=None, neox_args=_neox_args()
     )
 
+    assert isinstance(model_inputs, PackedSequenceModelInputs)
     assert all(
         actual is expected
         for actual, expected in zip(
