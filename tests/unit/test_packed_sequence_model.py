@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
 import torch
+from torch.utils.checkpoint import checkpoint
 
 from megatron.data.packed_sequence import PackedSequenceModelInputs
 from megatron.model.gpt2_model import (
@@ -27,6 +29,7 @@ from megatron.model.transformer import (
     ParallelTransformerLayer,
     ParallelTransformerLayerPipe,
 )
+from megatron.model.utils import SequentialWrapper
 from megatron.model.word_embeddings import Embedding, EmbeddingPipe
 
 
@@ -218,3 +221,80 @@ def test_native_attention_rejects_packed_context_until_backend_support_exists():
             num_documents=torch.tensor(2, dtype=torch.int32),
             max_seqlen=torch.tensor(2, dtype=torch.int32),
         )
+
+
+@pytest.mark.cpu
+def test_sequential_wrapper_preserves_packed_context_during_checkpointing():
+    """Exercise the wrapper constructed by GPT2ModelPipe.to_sequential()."""
+
+    class CheckpointedParallelTransformerLayerPipe(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = torch.nn.Parameter(torch.tensor(2.0))
+            self.received_contexts = []
+
+        def forward(self, args):
+            hidden_states, *context = args
+            self.received_contexts.append(
+                tuple(tensor.detach().clone() for tensor in context)
+            )
+            return (hidden_states * self.weight, *context)
+
+    class PostTransformerBlock(torch.nn.Module):
+        def forward(self, args):
+            self.received_context = tuple(
+                tensor.detach().clone() for tensor in args[1:]
+            )
+            return _post_transformer_block(args)
+
+    def run(checkpoint_interval):
+        transformer_layer = CheckpointedParallelTransformerLayerPipe()
+        post_transformer = PostTransformerBlock()
+        model = SequentialWrapper(
+            [transformer_layer, post_transformer],
+            activation_checkpoint_interval=checkpoint_interval,
+            activation_checkpoint_func=partial(checkpoint, use_reentrant=True),
+            parent_class_name="GPT2ModelPipe",
+        )
+
+        hidden_states = torch.arange(8, dtype=torch.float32).view(4, 1, 2)
+        hidden_states.requires_grad_()
+        context = (
+            torch.tensor([0, 2, 4, 4, 4], dtype=torch.int32),
+            torch.tensor(2, dtype=torch.int32),
+            torch.tensor(2, dtype=torch.int32),
+            torch.zeros(1, dtype=torch.bool),
+        )
+
+        output = model((hidden_states, *context))
+        output.sum().backward()
+
+        assert torch.is_tensor(output)
+        assert len(post_transformer.received_context) == len(context)
+        received_contexts = [
+            post_transformer.received_context,
+            *transformer_layer.received_contexts,
+        ]
+        for received_context in received_contexts:
+            for actual, expected in zip(received_context, context):
+                assert torch.equal(actual, expected)
+                assert actual.dtype == expected.dtype
+                assert actual.shape == expected.shape
+        for tensor in context:
+            assert not tensor.requires_grad
+            assert tensor.grad is None
+
+        expected_layer_calls = 2 if checkpoint_interval else 1
+        assert len(transformer_layer.received_contexts) == expected_layer_calls
+
+        return (
+            output.detach(),
+            hidden_states.grad,
+            transformer_layer.weight.grad,
+        )
+
+    direct = run(checkpoint_interval=0)
+    checkpointed = run(checkpoint_interval=1)
+
+    for direct_tensor, checkpointed_tensor in zip(direct, checkpointed):
+        assert torch.equal(direct_tensor, checkpointed_tensor)
