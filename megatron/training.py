@@ -556,11 +556,6 @@ def get_batch_pipe(data, neox_args, curr_scheduler=None):
         neox_args, neox_args.tokenizer, keys, data, datatype
     )
     if isinstance(batch, PackedSequenceBatch):
-        if curr_scheduler is not None:
-            raise ValueError(
-                "inter_document_attention_masking is not compatible with "
-                "curriculum sequence-length training"
-            )
         return batch.model_inputs(), batch.loss_inputs()
 
     tokens, labels, loss_mask, attention_mask, position_ids = batch
