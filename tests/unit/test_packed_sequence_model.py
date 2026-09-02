@@ -29,6 +29,7 @@ from megatron.model.transformer import (
     ParallelTransformerLayer,
     ParallelTransformerLayerPipe,
 )
+from megatron.model.positional_embeddings import RotaryEmbedding
 from megatron.model.utils import SequentialWrapper
 from megatron.model.word_embeddings import Embedding, EmbeddingPipe
 
@@ -514,6 +515,225 @@ def test_native_flash_attention_preserves_ordinary_evaluation_path():
     assert torch.equal(cu_seqlens_k, expected_cu_seqlens)
     assert max_seqlen_q == max_seqlen_k == 3
     assert kwargs["causal"] is True
+
+
+@pytest.mark.cpu
+def test_learned_embeddings_consume_document_local_position_ids():
+    embedding = Embedding.__new__(Embedding)
+    torch.nn.Module.__init__(embedding)
+    embedding.word_embeddings = torch.nn.Embedding(2, 4)
+    embedding.position_embeddings = torch.nn.Embedding(3, 4)
+    embedding.use_pos_emb = True
+    embedding.embedding_type = "learned"
+    embedding.opt_pos_emb_offset = 0
+    embedding.mup_rp_embedding_mult = 1.0
+    embedding.tokentype_embeddings = None
+    embedding.embedding_dropout = torch.nn.Identity()
+    embedding.use_mup = False
+    embedding.sequence_parallel = False
+
+    with torch.no_grad():
+        embedding.word_embeddings.weight.zero_()
+        embedding.position_embeddings.weight.copy_(
+            torch.arange(12, dtype=torch.float32).view(3, 4)
+        )
+
+    position_ids = torch.tensor([[0, 1, 2, 0, 1]])
+    output = embedding(torch.zeros_like(position_ids), position_ids)
+
+    assert torch.equal(output[0, 0], output[0, 3])
+    assert torch.equal(output[0, 1], output[0, 4])
+    assert torch.equal(output, embedding.position_embeddings(position_ids))
+
+    output.sum().backward()
+    expected_position_grad = torch.tensor([[2.0] * 4, [2.0] * 4, [1.0] * 4])
+    assert torch.equal(
+        embedding.position_embeddings.weight.grad, expected_position_grad
+    )
+
+
+def _make_cuda_native_flash_attention(mode):
+    from flash_attn.flash_attn_interface import (
+        flash_attn_func,
+        flash_attn_varlen_func,
+    )
+    from flash_attn.layers.rotary import apply_rotary_emb
+
+    num_heads = 2
+    head_dim = 16
+
+    class QKV(torch.nn.Module):
+        def forward(self, hidden_states):
+            shaped = hidden_states.view(
+                *hidden_states.shape[:-1], num_heads, head_dim
+            )
+            mixed = torch.cat(
+                (shaped, shaped * 0.75 + 0.1, shaped * 1.25 - 0.2), dim=-1
+            )
+            return mixed.flatten(start_dim=-2), None
+
+    class Dense(torch.nn.Module):
+        def forward(self, hidden_states):
+            return hidden_states, None
+
+    attention = ParallelSelfAttention.__new__(ParallelSelfAttention)
+    torch.nn.Module.__init__(attention)
+    attention.gqa = False
+    attention.query_key_value = QKV()
+    attention.dense = Dense()
+    attention.num_attention_heads_per_partition = num_heads
+    attention.num_kv_heads_per_partition = num_heads
+    attention.hidden_size_per_attention_head = head_dim
+    attention.hidden_size_per_partition = num_heads * head_dim
+    attention.use_qk_layernorm = False
+    attention.use_cache = False
+    attention.use_flash_attention = True
+    attention.use_triton = False
+    attention.sparse = False
+    attention.dropout_p = 0.0
+    attention.sliding_window_width = 1 if mode == "sliding-window" else None
+    attention.pos_emb = "alibi" if mode == "alibi" else "none"
+    attention.flash_qkv_fn = flash_attn_func
+    attention.flash_varlen_qkv_fn = flash_attn_varlen_func
+    attention.bf16 = False
+    attention.rope_fusion = False
+
+    if mode == "alibi":
+        attention.alibi_embed = SimpleNamespace(
+            slopes=torch.tensor([0.5, 0.25], device="cuda")
+        )
+
+    if mode.startswith("rotary"):
+        attention.rotary_ndims = 8 if mode == "rotary-partial" else None
+        rotary_dim = attention.rotary_ndims or head_dim
+        attention.rotary_emb = RotaryEmbedding(
+            rotary_dim,
+            max_seq_len=5,
+            precision=torch.float16,
+        )
+        attention.flash_apply_rotary_fn = apply_rotary_emb
+    else:
+        attention.rotary_ndims = None
+        attention.rotary_emb = None
+
+    return attention
+
+
+def _make_cuda_learned_embedding():
+    embedding = Embedding.__new__(Embedding)
+    torch.nn.Module.__init__(embedding)
+    embedding.word_embeddings = torch.nn.Embedding(
+        2, 32, device="cuda", dtype=torch.float16
+    )
+    embedding.position_embeddings = torch.nn.Embedding(
+        3, 32, device="cuda", dtype=torch.float16
+    )
+    embedding.use_pos_emb = True
+    embedding.embedding_type = "learned"
+    embedding.opt_pos_emb_offset = 0
+    embedding.mup_rp_embedding_mult = 1.0
+    embedding.tokentype_embeddings = None
+    embedding.embedding_dropout = torch.nn.Identity()
+    embedding.use_mup = False
+    embedding.sequence_parallel = False
+    return embedding
+
+
+def _run_per_document_reference(attention, hidden_states, boundaries, mask):
+    outputs = []
+    for start, end in zip(boundaries[:-1], boundaries[1:]):
+        output, bias = attention(hidden_states[start:end], mask)
+        assert bias is None
+        outputs.append(output)
+    return torch.cat(outputs, dim=0)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+@pytest.mark.parametrize(
+    "mode",
+    ["learned", "rotary-full", "rotary-partial", "alibi", "sliding-window"],
+)
+def test_packed_positional_modes_match_real_flash_attention_reference(mode):
+    pytest.importorskip("flash_attn")
+    torch.manual_seed(1234)
+    attention = _make_cuda_native_flash_attention(mode)
+    attention.train()
+
+    boundaries = (0, 3, 5)
+    cu_seqlens = torch.tensor(boundaries, dtype=torch.int32, device="cuda")
+    num_documents = torch.tensor(2, dtype=torch.int32, device="cuda")
+    max_seqlen = torch.tensor(3, dtype=torch.int32, device="cuda")
+    attention_mask = torch.zeros(1, dtype=torch.bool, device="cuda")
+
+    if mode == "learned":
+        embedding = _make_cuda_learned_embedding()
+        token_ids = torch.zeros((1, 5), dtype=torch.long, device="cuda")
+        position_ids = torch.tensor(
+            [[0, 1, 2, 0, 1]], dtype=torch.long, device="cuda"
+        )
+        hidden_states = embedding(token_ids, position_ids).transpose(0, 1)
+        assert torch.equal(hidden_states[0], hidden_states[3])
+        assert torch.equal(hidden_states[1], hidden_states[4])
+        gradient_targets = tuple(embedding.parameters())
+    else:
+        hidden_states = (
+            torch.randn((5, 1, 32), device="cuda", dtype=torch.float16) * 0.2
+        ).requires_grad_()
+        gradient_targets = (hidden_states,)
+
+    packed_output, packed_bias = attention(
+        hidden_states,
+        attention_mask,
+        cu_seqlens=cu_seqlens,
+        num_documents=num_documents,
+        max_seqlen=max_seqlen,
+    )
+    reference_output = _run_per_document_reference(
+        attention, hidden_states, boundaries, attention_mask
+    )
+
+    assert packed_bias is None
+    torch.testing.assert_close(
+        packed_output, reference_output, atol=5e-3, rtol=5e-3
+    )
+
+    probe = torch.randn_like(packed_output)
+    packed_grads = torch.autograd.grad(
+        (packed_output.float() * probe.float()).sum(),
+        gradient_targets,
+        retain_graph=True,
+    )
+    reference_grads = torch.autograd.grad(
+        (reference_output.float() * probe.float()).sum(), gradient_targets
+    )
+    for packed_grad, reference_grad in zip(packed_grads, reference_grads):
+        torch.testing.assert_close(
+            packed_grad, reference_grad, atol=1e-2, rtol=1e-2
+        )
+
+    changed_first_document = hidden_states.detach().clone()
+    changed_first_document[: boundaries[1]].add_(1.0)
+    changed_output, _ = attention(
+        changed_first_document,
+        attention_mask,
+        cu_seqlens=cu_seqlens,
+        num_documents=num_documents,
+        max_seqlen=max_seqlen,
+    )
+    torch.testing.assert_close(
+        changed_output[boundaries[1] :],
+        packed_output.detach()[boundaries[1] :],
+        atol=0,
+        rtol=0,
+    )
+
+    attention.eval()
+    evaluation_output, _ = attention(hidden_states.detach(), attention_mask)
+    attention.train()
+    training_output, _ = attention(hidden_states.detach(), attention_mask)
+    torch.testing.assert_close(
+        evaluation_output, training_output, atol=5e-3, rtol=5e-3
+    )
 
 
 @pytest.mark.cpu

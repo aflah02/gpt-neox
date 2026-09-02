@@ -1144,20 +1144,16 @@ class NeoXArgs(*BASE_CLASSES):
                 "curriculum sequence-length training"
             )
 
-            supported_attention_types = {"global", "flash"}
-            unsupported_attention_types = sorted(
-                set(self.attention_config) - supported_attention_types
+            assert not (self.te_mha or self.te_fp8_mha), (
+                "inter_document_attention_masking currently supports only native "
+                "FlashAttention; Transformer Engine attention is not supported"
             )
-            assert not unsupported_attention_types, (
-                "inter_document_attention_masking does not yet support attention "
-                f"types: {unsupported_attention_types}"
-            )
-            assert self.te_mha or self.te_fp8_mha or all(
+            assert all(
                 attention_type == "flash"
                 for attention_type in self.attention_config
             ), (
-                "inter_document_attention_masking requires Transformer Engine "
-                "attention or FlashAttention for every transformer layer"
+                "inter_document_attention_masking requires native FlashAttention "
+                "for every transformer layer"
             )
 
             supported_position_embedding_types = {
