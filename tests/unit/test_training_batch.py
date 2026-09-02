@@ -213,6 +213,28 @@ def test_get_batch_sequential_preserves_packed_mask_sentinel(monkeypatch):
 
 
 @pytest.mark.cpu
+def test_get_batch_sequential_accepts_ordinary_input_when_feature_is_enabled(
+    monkeypatch,
+):
+    tokens = torch.tensor([[0, 1, 2, 3]])
+    position_ids = torch.tensor([[0, 1, 2, 3]])
+    dense_attention_mask = torch.zeros((1, 1, 4, 4), dtype=torch.bool)
+
+    def get_masks(data, eod_token, eod_mask_loss):
+        assert data is tokens
+        return dense_attention_mask, None, position_ids
+
+    monkeypatch.setattr(training, "get_ltor_masks_and_position_ids", get_masks)
+
+    forward_input = (tokens, position_ids, dense_attention_mask)
+    result = training.get_batch_sequential(forward_input, _neox_args(enabled=True))
+
+    assert result[0] is tokens
+    assert result[1] is position_ids
+    assert result[2] is dense_attention_mask
+
+
+@pytest.mark.cpu
 def test_get_batch_pipe_keeps_metadata_in_model_inputs(
     monkeypatch, packed_batch_result
 ):

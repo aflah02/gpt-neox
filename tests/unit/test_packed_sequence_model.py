@@ -96,8 +96,7 @@ def test_transformer_layer_pipe_threads_model_context(monkeypatch, packed):
     else:
         context = (attention_mask,)
 
-    expected_output = torch.ones_like(hidden_states)
-    received = {}
+    received = []
 
     def forward(
         _self,
@@ -109,33 +108,117 @@ def test_transformer_layer_pipe_threads_model_context(monkeypatch, packed):
         num_documents=None,
         max_seqlen=None,
     ):
-        received["values"] = (
-            hidden,
-            mask,
-            cu_seqlens,
-            num_documents,
-            max_seqlen,
+        received.append(
+            (
+                hidden,
+                mask,
+                cu_seqlens,
+                num_documents,
+                max_seqlen,
+            )
         )
-        return expected_output
+        return hidden + 1
 
     monkeypatch.setattr(ParallelTransformerLayer, "forward", forward)
-    layer = ParallelTransformerLayerPipe.__new__(ParallelTransformerLayerPipe)
-    torch.nn.Module.__init__(layer)
+    layers = []
+    for _ in range(2):
+        layer = ParallelTransformerLayerPipe.__new__(ParallelTransformerLayerPipe)
+        torch.nn.Module.__init__(layer)
+        layers.append(layer)
 
-    output = layer((hidden_states, *context))
+    output = (hidden_states, *context)
+    for layer in layers:
+        output = layer(output)
 
     expected_metadata = context[:-1] if packed else (None, None, None)
-    assert all(
-        actual is expected
-        for actual, expected in zip(
-            received["values"],
-            (hidden_states, attention_mask, *expected_metadata),
+    assert len(received) == len(layers)
+    for layer_index, values in enumerate(received):
+        assert torch.equal(values[0], hidden_states + layer_index)
+        assert all(
+            actual is expected
+            for actual, expected in zip(
+                values[1:],
+                (attention_mask, *expected_metadata),
+            )
         )
-    )
-    assert output[0] is expected_output
+    assert torch.equal(output[0], hidden_states + len(layers))
     assert all(
         actual is expected for actual, expected in zip(output[1:], context)
     )
+
+
+@pytest.mark.cpu
+def test_deepspeed_two_stage_transport_preserves_packed_context(monkeypatch):
+    """Exercise DeepSpeed's stage send/receive logic without a network backend."""
+
+    from deepspeed.runtime.pipe import engine as pipeline_engine
+
+    packed_context = (
+        torch.arange(8, dtype=torch.float32).view(4, 1, 2),
+        torch.tensor([0, 2, 4, 4, 4], dtype=torch.int32),
+        torch.tensor(2, dtype=torch.int32),
+        torch.tensor(2, dtype=torch.int32),
+        torch.ones(1, dtype=torch.bool),
+    )
+    mailbox = []
+
+    def send(tensor, _stage):
+        mailbox.append(tensor.detach().clone())
+
+    monkeypatch.setattr(pipeline_engine.p2p, "send", send)
+    sender = SimpleNamespace(
+        wall_clock_breakdown=lambda: False,
+        pipe_buffers={"outputs": [packed_context]},
+        has_attention_mask=True,
+        has_bool_tensors=False,
+        dynamic_shape=False,
+        first_output_send=False,
+        next_stage=1,
+    )
+
+    pipeline_engine.PipelineEngine._exec_send_activations(sender, 0)
+
+    assert [tensor.dtype for tensor in mailbox] == [
+        torch.float32,
+        torch.int32,
+        torch.int32,
+        torch.int32,
+        torch.float16,
+    ]
+
+    def recv(tensor, _stage):
+        tensor.copy_(mailbox.pop(0))
+
+    monkeypatch.setattr(pipeline_engine.p2p, "recv", recv)
+    receive_buffers = tuple(
+        torch.empty_like(
+            tensor,
+            dtype=torch.float16 if tensor.dtype == torch.bool else tensor.dtype,
+        )
+        for tensor in packed_context
+    )
+    receiver = SimpleNamespace(
+        wall_clock_breakdown=lambda: False,
+        dynamic_shape=False,
+        pipe_recv_buf=receive_buffers,
+        prev_stage=0,
+        is_pipe_partitioned=False,
+        meta_buffer=None,
+        device=torch.device("cpu"),
+        has_attention_mask=True,
+        has_bool_tensors=False,
+        pipe_buffers={"inputs": [None]},
+    )
+
+    pipeline_engine.PipelineEngine._exec_recv_activations(receiver, 0)
+
+    received = receiver.pipe_buffers["inputs"][0]
+    assert not mailbox
+    assert len(received) == len(packed_context)
+    for actual, expected in zip(received, packed_context):
+        assert torch.equal(actual, expected)
+        assert actual.dtype == expected.dtype
+        assert actual.shape == expected.shape
 
 
 @pytest.mark.cpu
