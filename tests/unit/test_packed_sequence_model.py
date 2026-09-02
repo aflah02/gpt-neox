@@ -571,6 +571,45 @@ def test_te_partial_rotary_thd_preserves_nonrotary_suffix():
     assert torch.equal(packed_output[..., rotary_dim:], hidden_states[..., rotary_dim:])
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_te_fixed_evaluation_is_unchanged_after_packed_training_forward():
+    pytest.importorskip("transformer_engine")
+
+    torch.manual_seed(1234)
+    attention = _make_cuda_te_attention("rotary-partial", max_seq_len=8)
+    attention_mask = torch.zeros(1, dtype=torch.bool, device="cuda")
+    fixed_hidden_states = torch.randn(
+        (4, 3, 32),
+        device="cuda",
+        dtype=torch.bfloat16,
+    )
+
+    attention.eval()
+    reference_output, reference_bias = attention(
+        fixed_hidden_states,
+        attention_mask,
+    )
+    parameter_names = tuple(attention.state_dict())
+
+    attention.train()
+    attention(
+        torch.randn((5, 1, 32), device="cuda", dtype=torch.bfloat16),
+        attention_mask,
+        cu_seqlens=torch.tensor([0, 2, 5], dtype=torch.int32, device="cuda"),
+        num_documents=torch.tensor(2, dtype=torch.int32, device="cuda"),
+        max_seqlen=torch.tensor(3, dtype=torch.int32, device="cuda"),
+    )
+
+    attention.eval()
+    output, bias = attention(fixed_hidden_states, attention_mask)
+
+    assert attention.qkv_format == "sbhd"
+    assert output.shape == fixed_hidden_states.shape
+    assert tuple(attention.state_dict()) == parameter_names
+    torch.testing.assert_close(output, reference_output, atol=0, rtol=0)
+    torch.testing.assert_close(bias, reference_bias, atol=0, rtol=0)
+
+
 def _make_native_flash_attention(*, rotary_ndims=None):
     """Construct a CPU-only attention shell around mocked FlashAttention ops."""
 
