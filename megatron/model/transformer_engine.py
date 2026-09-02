@@ -622,8 +622,22 @@ class TEMultiheadAttention(te.pytorch.MultiheadAttention):
             self.rope_emb = self.rotary_embeddings.get_emb()
 
     def forward(
-        self, hidden_states, attention_mask, layer_past=None, rope_emb=None, **kwargs
+        self,
+        hidden_states,
+        attention_mask,
+        layer_past=None,
+        rope_emb=None,
+        *,
+        cu_seqlens=None,
+        num_documents=None,
+        max_seqlen=None,
+        **kwargs,
     ):
+        if cu_seqlens is not None:
+            raise NotImplementedError(
+                "Packed-sequence Transformer Engine attention execution is not "
+                "implemented yet"
+            )
         output = super(TEMultiheadAttention, self).forward(
             hidden_states, attention_mask, rotary_pos_emb=self.rope_emb, **kwargs
         )

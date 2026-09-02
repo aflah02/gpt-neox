@@ -784,7 +784,20 @@ class ParallelSelfAttention(nn.Module):
 
         return query_layer, key_layer, value_layer
 
-    def forward(self, hidden_states, attention_mask, layer_past=None):
+    def forward(
+        self,
+        hidden_states,
+        attention_mask,
+        layer_past=None,
+        *,
+        cu_seqlens=None,
+        num_documents=None,
+        max_seqlen=None,
+    ):
+        if cu_seqlens is not None:
+            raise NotImplementedError(
+                "Packed-sequence FlashAttention execution is not implemented yet"
+            )
 
         # hidden_states: [sq, b, h]
 
@@ -1042,7 +1055,16 @@ class ParallelTransformerLayer(nn.Module):
             fn = get_bias_dropout_add(self.training)
         return fn
 
-    def forward(self, x, attention_mask, layer_past=None):
+    def forward(
+        self,
+        x,
+        attention_mask,
+        layer_past=None,
+        *,
+        cu_seqlens=None,
+        num_documents=None,
+        max_seqlen=None,
+    ):
         layer_past = layer_past if layer_past is not None else self.layer_past
         bias_dropout_fn = self._get_bias_dropout()
 
@@ -1084,7 +1106,12 @@ class ParallelTransformerLayer(nn.Module):
 
                 # attention operator
                 attention_output, attention_bias = self.attention(
-                    x1, attention_mask, layer_past=layer_past
+                    x1,
+                    attention_mask,
+                    layer_past=layer_past,
+                    cu_seqlens=cu_seqlens,
+                    num_documents=num_documents,
+                    max_seqlen=max_seqlen,
                 )
                 if self.use_cache:
                     attention_output, presents = attention_output
@@ -1123,7 +1150,12 @@ class ParallelTransformerLayer(nn.Module):
 
                 # x = x + attn(ln1(x))
                 attention_output, attention_bias = self.attention(
-                    self.input_layernorm(x), attention_mask, layer_past=layer_past
+                    self.input_layernorm(x),
+                    attention_mask,
+                    layer_past=layer_past,
+                    cu_seqlens=cu_seqlens,
+                    num_documents=num_documents,
+                    max_seqlen=max_seqlen,
                 )
 
                 if self.use_cache:
@@ -1178,15 +1210,21 @@ class ParallelTransformerLayer(nn.Module):
 
 
 class ParallelTransformerLayerPipe(ParallelTransformerLayer):
-    """Extends ParallelTransformerLayer to forward attention_mask through the pipeline."""
+    """Extends ParallelTransformerLayer to forward model context through the pipeline."""
 
     def forward(self, args):
-        assert (
-            len(args) == 2
-        ), "ParallelTransformerLayerPipe expects 2 arguments - hidden_states and attention_mask"
-        hidden_states, attention_mask = args
-        # we are returning just [hidden_states, mask]
-        return super().forward(hidden_states, attention_mask), attention_mask
+        hidden_states, *packed_metadata, attention_mask = args
+        cu_seqlens = num_documents = max_seqlen = None
+        if packed_metadata:
+            cu_seqlens, num_documents, max_seqlen = packed_metadata
+        output = super().forward(
+            hidden_states,
+            attention_mask,
+            cu_seqlens=cu_seqlens,
+            num_documents=num_documents,
+            max_seqlen=max_seqlen,
+        )
+        return (output, *packed_metadata, attention_mask)
 
 
 class ParallelLinearPipe(ParallelLinear):
