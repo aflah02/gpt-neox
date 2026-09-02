@@ -293,6 +293,187 @@ def test_transformer_layer_passes_metadata_to_attention(gpt_j_residual):
     )
 
 
+@pytest.mark.cpu
+def test_te_attention_dispatches_packed_thd_without_mutating_fixed_format(
+    monkeypatch,
+):
+    pytest.importorskip("transformer_engine")
+    from megatron.model.transformer_engine import TEMultiheadAttention, te
+
+    attention = TEMultiheadAttention.__new__(TEMultiheadAttention)
+    torch.nn.Module.__init__(attention)
+    attention.qkv_format = "sbhd"
+    attention.use_cache = False
+    attention.pos_emb = "alibi"
+    attention.packed_window_size = (3, -1)
+    attention.alibi_embed = SimpleNamespace(slopes=torch.tensor([0.5]))
+    attention.probe = torch.nn.Parameter(torch.ones(4))
+    calls = []
+
+    def te_forward(module, hidden_states, attention_mask=None, **kwargs):
+        calls.append((module, hidden_states, attention_mask, kwargs))
+        output = (
+            hidden_states.squeeze(1)
+            if module.qkv_format == "thd"
+            else hidden_states
+        )
+        return output, module.probe
+
+    monkeypatch.setattr(te.pytorch.MultiheadAttention, "forward", te_forward)
+
+    hidden_states = torch.zeros((5, 1, 4))
+    attention_mask = torch.zeros(1, dtype=torch.bool)
+    padded_cu_seqlens = torch.tensor(
+        [0, 2, 5, 5, 5, 5], dtype=torch.int32
+    )
+    packed_output, packed_bias = attention(
+        hidden_states,
+        attention_mask,
+        cu_seqlens=padded_cu_seqlens,
+        num_documents=torch.tensor(2, dtype=torch.int32),
+        max_seqlen=torch.tensor(3, dtype=torch.int32),
+        is_first_microbatch=True,
+    )
+
+    packed_module, _, packed_mask, packed_kwargs = calls.pop(0)
+    assert packed_module is not attention
+    assert packed_module.probe is attention.probe
+    assert packed_module.qkv_format == "thd"
+    assert attention.qkv_format == "sbhd"
+    assert packed_mask is None
+    assert packed_output.shape == hidden_states.shape
+    assert packed_bias is attention.probe
+    assert packed_kwargs["attn_mask_type"] == "padding_causal"
+    assert packed_kwargs["window_size"] == (3, -1)
+    assert torch.equal(
+        packed_kwargs["cu_seqlens_q"],
+        torch.tensor([0, 2, 5], dtype=torch.int32),
+    )
+    assert packed_kwargs["cu_seqlens_kv"] is packed_kwargs["cu_seqlens_q"]
+    assert packed_kwargs["max_seqlen_q"] == 3
+    assert packed_kwargs["max_seqlen_kv"] == 3
+    assert packed_kwargs["core_attention_bias_type"] == "alibi"
+    assert torch.equal(packed_kwargs["alibi_slopes"], torch.tensor([0.5]))
+    assert packed_kwargs["is_first_microbatch"] is True
+
+    fixed_output, fixed_bias = attention(hidden_states, attention_mask)
+
+    fixed_module, _, fixed_mask, fixed_kwargs = calls.pop(0)
+    assert fixed_module is attention
+    assert fixed_module.qkv_format == "sbhd"
+    assert fixed_mask is attention_mask
+    assert fixed_output is hidden_states
+    assert fixed_bias is attention.probe
+    assert "cu_seqlens_q" not in fixed_kwargs
+    assert "attn_mask_type" not in fixed_kwargs
+    assert not calls
+
+
+@pytest.mark.cpu
+def test_te_attention_rejects_kv_cache_for_packed_execution():
+    pytest.importorskip("transformer_engine")
+    from megatron.model.transformer_engine import TEMultiheadAttention
+
+    attention = TEMultiheadAttention.__new__(TEMultiheadAttention)
+    torch.nn.Module.__init__(attention)
+    attention.qkv_format = "sbhd"
+    attention.use_cache = False
+    attention.pos_emb = "none"
+    attention.packed_window_size = None
+    packed_args = {
+        "cu_seqlens": torch.tensor([0, 2], dtype=torch.int32),
+        "num_documents": torch.tensor(1, dtype=torch.int32),
+        "max_seqlen": torch.tensor(2, dtype=torch.int32),
+    }
+
+    incompatible_cache_args = (
+        {"layer_past": torch.ones(1)},
+        {"inference_params": object()},
+    )
+    for cache_args in incompatible_cache_args:
+        with pytest.raises(RuntimeError, match="does not support KV-cache"):
+            attention(
+                torch.zeros((2, 1, 4)),
+                torch.zeros(1, dtype=torch.bool),
+                **packed_args,
+                **cache_args,
+            )
+
+    attention.use_cache = True
+    with pytest.raises(RuntimeError, match="does not support KV-cache"):
+        attention(
+            torch.zeros((2, 1, 4)),
+            torch.zeros(1, dtype=torch.bool),
+            **packed_args,
+        )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="requires CUDA")
+def test_te_packed_thd_matches_per_document_reference():
+    pytest.importorskip("transformer_engine")
+    from megatron.model.transformer_engine import TEMultiheadAttention, te
+
+    torch.manual_seed(1234)
+    attention = TEMultiheadAttention.__new__(TEMultiheadAttention)
+    te.pytorch.MultiheadAttention.__init__(
+        attention,
+        hidden_size=32,
+        num_attention_heads=2,
+        attention_dropout=0.0,
+        params_dtype=torch.bfloat16,
+        device="cuda",
+        qkv_format="sbhd",
+        fuse_qkv_params=True,
+        return_bias=True,
+    )
+    attention.use_cache = False
+    attention.pos_emb = "none"
+    attention.packed_window_size = None
+    attention.train()
+
+    hidden_states = (
+        torch.randn((5, 1, 32), device="cuda", dtype=torch.bfloat16) * 0.2
+    ).requires_grad_()
+    attention_mask = torch.zeros(1, dtype=torch.bool, device="cuda")
+    packed_output, packed_bias = attention(
+        hidden_states,
+        attention_mask,
+        cu_seqlens=torch.tensor(
+            [0, 2, 5, 5, 5, 5], dtype=torch.int32, device="cuda"
+        ),
+        num_documents=torch.tensor(2, dtype=torch.int32, device="cuda"),
+        max_seqlen=torch.tensor(3, dtype=torch.int32, device="cuda"),
+    )
+
+    reference_outputs = []
+    for start, end in ((0, 2), (2, 5)):
+        reference_output, reference_bias = attention(
+            hidden_states[start:end], attention_mask
+        )
+        reference_outputs.append(reference_output)
+        assert torch.equal(reference_bias, packed_bias)
+    reference_output = torch.cat(reference_outputs)
+
+    assert attention.qkv_format == "sbhd"
+    assert packed_output.shape == hidden_states.shape
+    torch.testing.assert_close(
+        packed_output, reference_output, atol=1e-2, rtol=1e-2
+    )
+
+    probe = torch.randn_like(packed_output)
+    packed_grad = torch.autograd.grad(
+        (packed_output.float() * probe.float()).sum(),
+        hidden_states,
+        retain_graph=True,
+    )[0]
+    reference_grad = torch.autograd.grad(
+        (reference_output.float() * probe.float()).sum(), hidden_states
+    )[0]
+    torch.testing.assert_close(
+        packed_grad, reference_grad, atol=2e-2, rtol=2e-2
+    )
+
+
 def _make_native_flash_attention(*, rotary_ndims=None):
     """Construct a CPU-only attention shell around mocked FlashAttention ops."""
 
