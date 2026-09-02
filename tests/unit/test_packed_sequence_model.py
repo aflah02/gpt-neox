@@ -291,19 +291,229 @@ def test_transformer_layer_passes_metadata_to_attention(gpt_j_residual):
     )
 
 
-@pytest.mark.cpu
-def test_native_attention_rejects_packed_context_until_backend_support_exists():
+def _make_native_flash_attention(*, rotary_ndims=None):
+    """Construct a CPU-only attention shell around mocked FlashAttention ops."""
+
+    class QKV(torch.nn.Module):
+        def forward(self, hidden_states):
+            return (
+                torch.cat(
+                    (hidden_states, hidden_states + 10, hidden_states + 20), dim=-1
+                ),
+                None,
+            )
+
+    class Dense(torch.nn.Module):
+        def forward(self, hidden_states):
+            return hidden_states, None
+
     attention = ParallelSelfAttention.__new__(ParallelSelfAttention)
     torch.nn.Module.__init__(attention)
+    attention.gqa = False
+    attention.query_key_value = QKV()
+    attention.dense = Dense()
+    attention.num_attention_heads_per_partition = 1
+    attention.num_kv_heads_per_partition = 1
+    attention.hidden_size_per_attention_head = 4
+    attention.hidden_size_per_partition = 4
+    attention.use_qk_layernorm = False
+    attention.rotary_ndims = rotary_ndims
+    attention.use_cache = False
+    attention.use_flash_attention = True
+    attention.use_triton = False
+    attention.sparse = False
+    attention.dropout_p = 0.25
+    attention.sliding_window_width = None
+    attention.pos_emb = "none"
+    return attention
 
-    with pytest.raises(NotImplementedError, match="Packed-sequence FlashAttention"):
-        attention(
-            torch.zeros((4, 1, 8)),
-            torch.zeros(1, dtype=torch.bool),
-            cu_seqlens=torch.tensor([0, 2, 4, 4, 4], dtype=torch.int32),
-            num_documents=torch.tensor(2, dtype=torch.int32),
-            max_seqlen=torch.tensor(2, dtype=torch.int32),
+
+@pytest.mark.cpu
+@pytest.mark.parametrize(
+    ("training", "expected_dropout"),
+    [(True, 0.25), (False, 0.0)],
+    ids=["training", "evaluation"],
+)
+def test_native_attention_dispatches_packed_metadata_to_flash_varlen(
+    training, expected_dropout
+):
+    attention = _make_native_flash_attention()
+    attention.rotary_emb = None
+    attention.sliding_window_width = 3
+    attention.pos_emb = "alibi"
+    attention.alibi_embed = SimpleNamespace(slopes=torch.tensor([0.5]))
+    calls = []
+
+    def flash_varlen(
+        query,
+        key,
+        value,
+        cu_seqlens_q,
+        cu_seqlens_k,
+        max_seqlen_q,
+        max_seqlen_k,
+        **kwargs,
+    ):
+        calls.append(
+            (
+                query,
+                key,
+                value,
+                cu_seqlens_q,
+                cu_seqlens_k,
+                max_seqlen_q,
+                max_seqlen_k,
+                kwargs,
+            )
         )
+        return query + key + value
+
+    attention.flash_varlen_qkv_fn = flash_varlen
+    attention.flash_qkv_fn = lambda *args, **kwargs: pytest.fail(
+        "fixed-shape FlashAttention was called"
+    )
+    attention.train(training)
+
+    hidden_states = torch.ones((5, 1, 4))
+    padded_cu_seqlens = torch.tensor([0, 2, 5, 5, 5, 5], dtype=torch.int32)
+    output, bias = attention(
+        hidden_states,
+        torch.zeros(1, dtype=torch.bool),
+        cu_seqlens=padded_cu_seqlens,
+        num_documents=torch.tensor(2, dtype=torch.int32),
+        max_seqlen=torch.tensor(3, dtype=torch.int32),
+    )
+
+    assert bias is None
+    assert output.shape == hidden_states.shape
+    assert len(calls) == 1
+    query, key, value, cu_q, cu_k, max_q, max_k, kwargs = calls[0]
+    assert query.shape == key.shape == value.shape == (5, 1, 4)
+    assert query.is_contiguous() and key.is_contiguous() and value.is_contiguous()
+    assert torch.equal(cu_q, torch.tensor([0, 2, 5], dtype=torch.int32))
+    assert torch.equal(cu_k, cu_q)
+    assert max_q == max_k == 3
+    assert kwargs["dropout_p"] == expected_dropout
+    assert kwargs["softmax_scale"] is None
+    assert kwargs["causal"] is True
+    assert kwargs["window_size"] == (3, -1)
+    assert torch.equal(kwargs["alibi_slopes"], torch.tensor([0.5]))
+    assert kwargs["alibi_slopes"].dtype == torch.float32
+
+
+@pytest.mark.cpu
+@pytest.mark.parametrize("rotary_ndims", [None, 2], ids=["full", "partial"])
+def test_native_packed_rotary_resets_at_document_boundaries(rotary_ndims):
+    attention = _make_native_flash_attention(rotary_ndims=rotary_ndims)
+    attention.pos_emb = "rotary"
+    attention.rope_fusion = True
+    rotary_dim = rotary_ndims or attention.hidden_size_per_attention_head
+    rotary_calls = []
+    flash_calls = []
+
+    class RotaryCache(torch.nn.Module):
+        def forward(self, value_layer, seq_dim=0, seq_len=None):
+            assert value_layer.shape == (5, 1, 1, 4)
+            assert seq_len == 3
+            values = torch.arange(seq_len * rotary_dim, dtype=torch.float32)
+            values = values.view(seq_len, 1, 1, rotary_dim)
+            return values.cos(), values.sin()
+
+    def apply_packed_rotary(tensor, cos, sin, *, cu_seqlens, max_seqlen):
+        rotary_calls.append((tensor, cos, sin, cu_seqlens, max_seqlen))
+        local_positions = torch.empty(tensor.size(0), dtype=tensor.dtype)
+        for start, end in zip(cu_seqlens[:-1], cu_seqlens[1:]):
+            start, end = int(start), int(end)
+            local_positions[start:end] = torch.arange(end - start, dtype=tensor.dtype)
+        return tensor + local_positions[:, None, None]
+
+    def flash_varlen(query, key, value, *args, **kwargs):
+        flash_calls.append((query, key, value, args, kwargs))
+        return query
+
+    attention.rotary_emb = RotaryCache()
+    attention.flash_apply_rotary_fn = apply_packed_rotary
+    attention.flash_varlen_qkv_fn = flash_varlen
+    attention.train()
+
+    attention(
+        torch.ones((5, 1, 4)),
+        torch.zeros(1, dtype=torch.bool),
+        cu_seqlens=torch.tensor([0, 2, 5, 5, 5, 5], dtype=torch.int32),
+        num_documents=torch.tensor(2, dtype=torch.int32),
+        max_seqlen=torch.tensor(3, dtype=torch.int32),
+    )
+
+    assert len(rotary_calls) == 2
+    for tensor, cos, sin, cu_seqlens, max_seqlen in rotary_calls:
+        assert tensor.shape == (5, 1, rotary_dim)
+        assert cos.shape == sin.shape == (3, rotary_dim // 2)
+        assert torch.equal(cu_seqlens, torch.tensor([0, 2, 5], dtype=torch.int32))
+        assert max_seqlen == 3
+
+    assert len(flash_calls) == 1
+    query, key, _, _, _ = flash_calls[0]
+    expected_positions = torch.tensor([0, 1, 0, 1, 2], dtype=query.dtype)
+    assert torch.equal(query[:, 0, 0], 1 + expected_positions)
+    assert torch.equal(key[:, 0, 0], 11 + expected_positions)
+    if rotary_ndims is not None:
+        assert torch.equal(query[:, 0, -1], torch.ones(5))
+        assert torch.equal(key[:, 0, -1], torch.full((5,), 11.0))
+
+
+@pytest.mark.cpu
+def test_native_flash_attention_preserves_fixed_shape_training_path():
+    attention = _make_native_flash_attention()
+    attention.pos_emb = "none"
+    fixed_calls = []
+
+    def flash_fixed(query, key, value, *args, **kwargs):
+        fixed_calls.append((query, key, value, args, kwargs))
+        return query
+
+    attention.flash_qkv_fn = flash_fixed
+    attention.flash_varlen_qkv_fn = lambda *args, **kwargs: pytest.fail(
+        "varlen FlashAttention was called"
+    )
+    attention.train()
+
+    query = torch.zeros((3, 2, 1, 4))
+    output = attention.flash_attention(query, query, query)
+
+    assert output.shape == (2, 1, 3, 4)
+    assert len(fixed_calls) == 1
+    assert fixed_calls[0][0].shape == (2, 3, 1, 4)
+    assert fixed_calls[0][4]["causal"] is True
+
+
+@pytest.mark.cpu
+def test_native_flash_attention_preserves_ordinary_evaluation_path():
+    attention = _make_native_flash_attention()
+    attention.pos_emb = "none"
+    varlen_calls = []
+
+    def flash_varlen(query, key, value, *args, **kwargs):
+        varlen_calls.append((query, key, value, args, kwargs))
+        return query
+
+    attention.flash_qkv_fn = lambda *args, **kwargs: pytest.fail(
+        "fixed-shape training FlashAttention was called"
+    )
+    attention.flash_varlen_qkv_fn = flash_varlen
+    attention.eval()
+
+    query = torch.zeros((3, 2, 1, 4))
+    output = attention.flash_attention(query, query, query)
+
+    assert output.shape == (2, 1, 3, 4)
+    assert len(varlen_calls) == 1
+    _, _, _, args, kwargs = varlen_calls[0]
+    cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k = args
+    expected_cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
+    assert torch.equal(cu_seqlens_q, expected_cu_seqlens)
+    assert torch.equal(cu_seqlens_k, expected_cu_seqlens)
+    assert max_seqlen_q == max_seqlen_k == 3
+    assert kwargs["causal"] is True
 
 
 @pytest.mark.cpu
