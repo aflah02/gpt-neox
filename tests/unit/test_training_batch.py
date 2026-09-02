@@ -78,24 +78,6 @@ def packed_batch_result():
 
 
 @pytest.mark.cpu
-def test_get_batch_broadcasts_packed_metadata_as_int32(local_broadcast):
-    data = _batch()
-
-    training._get_batch(
-        neox_args=_neox_args(),
-        tokenizer=SimpleNamespace(eod=-1),
-        keys=["text"],
-        data=data,
-        datatype=torch.int64,
-    )
-
-    assert local_broadcast == [
-        (["text"], torch.int64),
-        (["cu_seqlens", "max_seqlen"], torch.int32),
-    ]
-
-
-@pytest.mark.cpu
 def test_get_batch_packed_path_skips_dense_mask_and_preserves_loss_masking(
     monkeypatch, local_broadcast
 ):
@@ -120,6 +102,10 @@ def test_get_batch_packed_path_skips_dense_mask_and_preserves_loss_masking(
         datatype=torch.int64,
     )
 
+    assert local_broadcast == [
+        (["text", "label"], torch.int64),
+        (["cu_seqlens", "max_seqlen"], torch.int32),
+    ]
     assert isinstance(batch, PackedSequenceBatch)
     tokens = batch.tokens
     labels = batch.labels

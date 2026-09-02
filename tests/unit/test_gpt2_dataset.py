@@ -61,71 +61,66 @@ def _build_dataset(
 
 
 @pytest.mark.cpu
-def test_inter_document_metadata_tracks_partial_document_fragments():
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param(
+            {
+                "documents": [np.arange(5), np.arange(10, 16)],
+                "sample_idx": [[0, 2], [1, 5]],
+                "expected_text": [2, 3, 4, 10, 11, 12, 13, 14, 15],
+                "expected_cu_seqlens": [0, 3, 8, 8, 8, 8, 8, 8, 8],
+                "expected_max_seqlen": 5,
+            },
+            id="partial-fragments",
+        ),
+        pytest.param(
+            {
+                "documents": [np.arange(20)],
+                "sample_idx": [[0, 4], [0, 12]],
+                "expected_text": np.arange(4, 13),
+                "expected_cu_seqlens": [0, 8, 8, 8, 8, 8, 8, 8, 8],
+                "expected_max_seqlen": 8,
+            },
+            id="single-partial-document",
+        ),
+        pytest.param(
+            {
+                "documents": [np.arange(8), np.arange(10, 11)],
+                "sample_idx": [[0, 0], [1, 0]],
+                "expected_text": [0, 1, 2, 3, 4, 5, 6, 7, 10],
+                "expected_cu_seqlens": [0, 8, 8, 8, 8, 8, 8, 8, 8],
+                "expected_max_seqlen": 8,
+            },
+            id="label-only-final-fragment",
+        ),
+        pytest.param(
+            {
+                "documents": [np.arange(3), np.arange(10, 12)],
+                "sample_idx": [[0, 0], [1, 1]],
+                "expected_text": [0, 1, 2, 10, 11, 0, 0, 0, 0],
+                "expected_cu_seqlens": [0, 3, 8, 8, 8, 8, 8, 8, 8],
+                "expected_max_seqlen": 5,
+            },
+            id="sample-padding",
+        ),
+    ],
+)
+def test_inter_document_metadata_edge_cases(case):
     dataset = _build_dataset(
-        documents=[np.arange(5), np.arange(10, 16)],
-        sample_idx=[[0, 2], [1, 5]],
+        documents=case["documents"],
+        sample_idx=case["sample_idx"],
         seq_length=8,
     )
 
     sample = dataset[0]
 
-    np.testing.assert_array_equal(sample["text"], [2, 3, 4, 10, 11, 12, 13, 14, 15])
+    np.testing.assert_array_equal(sample["text"], case["expected_text"])
     np.testing.assert_array_equal(
-        sample["cu_seqlens"], [0, 3, 8, 8, 8, 8, 8, 8, 8]
+        sample["cu_seqlens"], case["expected_cu_seqlens"]
     )
     assert sample["cu_seqlens"].dtype == np.int32
-    assert sample["max_seqlen"] == np.int32(5)
-
-
-@pytest.mark.cpu
-def test_inter_document_metadata_tracks_single_partial_document():
-    dataset = _build_dataset(
-        documents=[np.arange(20)],
-        sample_idx=[[0, 4], [0, 12]],
-        seq_length=8,
-    )
-
-    sample = dataset[0]
-
-    np.testing.assert_array_equal(sample["text"], np.arange(4, 13))
-    np.testing.assert_array_equal(
-        sample["cu_seqlens"], [0, 8, 8, 8, 8, 8, 8, 8, 8]
-    )
-    assert sample["max_seqlen"] == np.int32(8)
-
-
-@pytest.mark.cpu
-def test_inter_document_metadata_drops_label_only_final_fragment():
-    dataset = _build_dataset(
-        documents=[np.arange(8), np.arange(10, 11)],
-        sample_idx=[[0, 0], [1, 0]],
-        seq_length=8,
-    )
-
-    sample = dataset[0]
-
-    np.testing.assert_array_equal(
-        sample["cu_seqlens"], [0, 8, 8, 8, 8, 8, 8, 8, 8]
-    )
-    assert sample["max_seqlen"] == np.int32(8)
-
-
-@pytest.mark.cpu
-def test_inter_document_metadata_folds_sample_padding_into_last_fragment():
-    dataset = _build_dataset(
-        documents=[np.arange(3), np.arange(10, 12)],
-        sample_idx=[[0, 0], [1, 1]],
-        seq_length=8,
-    )
-
-    sample = dataset[0]
-
-    np.testing.assert_array_equal(sample["text"], [0, 1, 2, 10, 11, 0, 0, 0, 0])
-    np.testing.assert_array_equal(
-        sample["cu_seqlens"], [0, 3, 8, 8, 8, 8, 8, 8, 8]
-    )
-    assert sample["max_seqlen"] == np.int32(5)
+    assert sample["max_seqlen"] == np.int32(case["expected_max_seqlen"])
 
 
 @pytest.mark.cpu
