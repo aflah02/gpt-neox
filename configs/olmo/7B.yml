@@ -6,7 +6,7 @@
   "make_vocab_size_divisible_by": 1,
 
   # model settings
-  "num_layers": 16,
+  "num_layers": 32,
   "hidden_size": 4096,
   "intermediate_size": 33024, # 11008*3 as NeoX requires 3x with Swiglu
   "num_attention_heads": 32,
