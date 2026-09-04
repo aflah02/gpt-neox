@@ -17,9 +17,7 @@ import textwrap
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MD = REPO_ROOT / "configs" / "neox_arguments.md"
 DEFAULT_NEOX_PY = REPO_ROOT / "megatron" / "neox_arguments" / "neox_args.py"
-DEFAULT_DEEPSPEED_PY = (
-    REPO_ROOT / "megatron" / "neox_arguments" / "deepspeed_args.py"
-)
+DEFAULT_DEEPSPEED_PY = REPO_ROOT / "megatron" / "neox_arguments" / "deepspeed_args.py"
 DEFAULT_PY_FILES = (DEFAULT_NEOX_PY, DEFAULT_DEEPSPEED_PY)
 IGNORED_ARGS = {"git_hash"}
 INTRO = (
@@ -166,7 +164,9 @@ def _unparse_annotation(value):
     if isinstance(value, ast.Attribute):
         return f"{_unparse_annotation(value.value)}.{value.attr}"
     if isinstance(value, ast.Subscript):
-        slice_value = value.slice.value if isinstance(value.slice, ast.Index) else value.slice
+        slice_value = (
+            value.slice.value if isinstance(value.slice, ast.Index) else value.slice
+        )
         return f"{_unparse_annotation(value.value)}[{_unparse_annotation(slice_value)}]"
     if isinstance(value, ast.Tuple):
         return ", ".join(_unparse_annotation(item) for item in value.elts)
@@ -405,7 +405,9 @@ def format_py_location(arg):
 
 def print_report(md_args, py_args, py_paths, md_path, diff):
     print(f"Markdown args: {len(md_args)} ({md_path})")
-    print(f"Python args:   {len(py_args)} ({', '.join(str(path) for path in py_paths)})")
+    print(
+        f"Python args:   {len(py_args)} ({', '.join(str(path) for path in py_paths)})"
+    )
 
     if not has_drift(diff):
         return
@@ -446,8 +448,12 @@ def print_report(md_args, py_args, py_paths, md_path, diff):
         print("Type mismatches:")
         for name, md_arg, py_arg in diff["type_mismatches"]:
             print(f"  - {name}")
-            print(f"    md: {format_md_location(md_arg)} = {display_value(md_arg['type'])}")
-            print(f"    py: {format_py_location(py_arg)} = {display_value(py_arg['type'])}")
+            print(
+                f"    md: {format_md_location(md_arg)} = {display_value(md_arg['type'])}"
+            )
+            print(
+                f"    py: {format_py_location(py_arg)} = {display_value(py_arg['type'])}"
+            )
 
     if diff["default_mismatches"]:
         print()
