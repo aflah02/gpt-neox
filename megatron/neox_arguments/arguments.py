@@ -1382,7 +1382,9 @@ class NeoXArgs(*BASE_CLASSES):
             if len(set(names)) != len(names):
                 raise ValueError(f"{split}_data_names entries must be unique.")
             if not all(isinstance(name, str) and name for name in names):
-                raise ValueError(f"{split}_data_names entries must be non-empty strings.")
+                raise ValueError(
+                    f"{split}_data_names entries must be non-empty strings."
+                )
 
         if self.eval_loss_logging != "blended":
             if self.data_path is not None:
@@ -1395,11 +1397,6 @@ class NeoXArgs(*BASE_CLASSES):
                 raise ValueError(
                     "eval_loss_logging='separate' or 'blended_and_separate' requires "
                     "explicit validation dataset paths."
-                )
-            if self.test_data_paths is None and self.pos_test_data_paths is None:
-                raise ValueError(
-                    "eval_loss_logging='separate' or 'blended_and_separate' requires "
-                    "explicit test dataset paths."
                 )
 
         return True

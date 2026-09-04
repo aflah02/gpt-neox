@@ -17,7 +17,11 @@ from tests.common import BASE_CONFIG, DistributedTest
 
 
 def test_main_constructor():
-    input_args = ["train.py", "tests/config/test_setup.yml", "configs/cpu_mock_config.yml"]
+    input_args = [
+        "train.py",
+        "tests/config/test_setup.yml",
+        "configs/cpu_mock_config.yml",
+    ]
     neox_args = NeoXArgs.consume_deepy_args(input_args)
     deepspeed_main_args = neox_args.get_deepspeed_main_args()
     neox_args = NeoXArgs.consume_neox_args(input_args=deepspeed_main_args)

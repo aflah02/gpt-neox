@@ -895,7 +895,7 @@ def shift_and_wrap_data_loaders(neox_args, data_loaders, loop=True):
 
     def wrap_named_data_loaders(named_data_loaders):
         return {
-            name: (cycle(dataloader) if loop else iter(dataloader))
+            name: (loop_iterator(dataloader) if loop else iter(dataloader))
             if dataloader is not None
             else None
             for name, dataloader in named_data_loaders.items()

@@ -59,7 +59,6 @@ def test_eval_loss_logging_defaults_to_blended():
     neox_args = NeoXArgs.from_dict(cpu_arg_config())
 
     assert neox_args.eval_loss_logging == "blended"
-    assert neox_args.eval_loss_aggregate == "weighted_mix"
     assert not is_separate_eval_enabled(neox_args)
 
 
@@ -123,7 +122,6 @@ def test_weighted_mix_aggregates_loss_before_perplexity():
 def test_evaluate_named_data_iterators_logs_subsets_and_blended_metric():
     neox_args = SimpleNamespace(
         eval_loss_logging="blended_and_separate",
-        eval_loss_aggregate="weighted_mix",
     )
 
     def fake_evaluate(*, data_iterator, **_kwargs):

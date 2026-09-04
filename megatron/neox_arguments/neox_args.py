@@ -1133,18 +1133,13 @@ class NeoXArgsTraining(NeoXArgsTemplate):
     Should be a list the same length as `test_data_paths`
     """
 
-    eval_loss_logging: Literal["blended", "separate", "blended_and_separate"] = (
-        "blended"
-    )
+    eval_loss_logging: Literal[
+        "blended", "separate", "blended_and_separate"
+    ] = "blended"
     """
     Validation/test loss logging mode. "blended" preserves the historical blended metric;
     "separate" logs each validation/test subset independently; "blended_and_separate"
     logs each subset and synthesizes a blended metric from subset losses.
-    """
-
-    eval_loss_aggregate: Literal["weighted_mix"] = "weighted_mix"
-    """
-    Aggregation mode for synthesized blended validation/test loss.
     """
 
     weight_by_num_documents: bool = False
