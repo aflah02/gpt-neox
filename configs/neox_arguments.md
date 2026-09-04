@@ -95,7 +95,7 @@ Logging Arguments
 
 - **git_hash**: str
 
-    Default = 75ebe64
+    Default = <dynamic>
 
     current git hash of repository
 
@@ -1127,7 +1127,7 @@ Text Generation arguments
 
 - **eval_results_prefix**: str
 
-    Default = 
+    Default = ''
 
     prefix to which to save evaluation results - final fp will be {eval_results_prefix}_eval_results_yy-mm-dd-HH-MM.json
 

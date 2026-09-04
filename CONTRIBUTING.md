@@ -63,7 +63,8 @@ python configs/neox_args_sync.py
 ```
 
 That check fails if the markdown argument names, types, defaults, or descriptions are
-out of sync with the Python source of truth. The dynamic `git_hash` argument is ignored.
+out of sync with the Python source of truth. The dynamic `git_hash` argument is ignored
+during validation and rendered as `<dynamic>` when syncing.
 
 ## Contributor License Agreement
 This project welcomes contributions and suggestions. Most contributions require you to

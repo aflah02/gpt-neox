@@ -10,7 +10,6 @@ import argparse
 import ast
 from pathlib import Path
 import re
-import subprocess
 import sys
 import textwrap
 
@@ -60,7 +59,7 @@ def extract_markdown_default(block):
     for line in block:
         stripped = line.strip()
         if stripped.startswith("Default ="):
-            return stripped.removeprefix("Default =").strip()
+            return stripped[len("Default =") :].strip()
     return ""
 
 
@@ -90,7 +89,13 @@ def parse_markdown_args(path: Path, include_deepspeed: bool = False):
                 break
             end += 1
 
-        args[arg_match.group(1)] = {
+        name = arg_match.group(1)
+        if name in args:
+            raise ValueError(
+                f"duplicate markdown arg {name!r}: "
+                f"{args[name]['section']}:{args[name]['line']} and {section}:{line_number}"
+            )
+        args[name] = {
             "line": line_number,
             "section": section,
             "type": arg_match.group(2).strip(),
@@ -127,7 +132,7 @@ def parse_module_constants(tree: ast.Module):
     return constants
 
 
-def format_python_default(value, constants):
+def format_python_default(value, constants, source):
     if value is None:
         return ""
 
@@ -137,30 +142,41 @@ def format_python_default(value, constants):
     try:
         literal_value = ast.literal_eval(value)
     except (ValueError, SyntaxError):
-        return ast.unparse(value)
+        segment = ast.get_source_segment(source, value)
+        if segment is None:
+            raise ValueError("could not recover source for non-literal default")
+        return " ".join(segment.split())
     return format_literal_default(literal_value)
 
 
-def get_git_commit_hash_default():
-    try:
-        return (
-            subprocess.check_output(["git", "describe", "--always"], cwd=REPO_ROOT)
-            .strip()
-            .decode()
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return None
-
-
 def format_literal_default(value):
+    if value == "":
+        return repr(value)
     formatted = str(value)
     if formatted != formatted.strip() or any(char in formatted for char in "\n\r\t"):
         return repr(value)
     return formatted
 
 
+def _unparse_annotation(value):
+    if hasattr(ast, "unparse"):
+        return ast.unparse(value)
+    if isinstance(value, ast.Name):
+        return value.id
+    if isinstance(value, ast.Attribute):
+        return f"{_unparse_annotation(value.value)}.{value.attr}"
+    if isinstance(value, ast.Subscript):
+        slice_value = value.slice.value if isinstance(value.slice, ast.Index) else value.slice
+        return f"{_unparse_annotation(value.value)}[{_unparse_annotation(slice_value)}]"
+    if isinstance(value, ast.Tuple):
+        return ", ".join(_unparse_annotation(item) for item in value.elts)
+    if isinstance(value, ast.Constant):
+        return repr(value.value)
+    raise TypeError(f"unsupported annotation node: {type(value).__name__}")
+
+
 def format_python_type(value):
-    formatted = ast.unparse(value)
+    formatted = _unparse_annotation(value)
     for name in ("Literal", "Union", "Optional", "List"):
         formatted = re.sub(rf"(?<![\w.]){name}\[", f"typing.{name}[", formatted)
     return formatted
@@ -200,9 +216,10 @@ def parse_python_sections(path: Path):
             )
             field_source = "\n".join(source_lines[stmt.lineno - 1 : end_exclusive])
             raw_description, description = extract_python_description(field_source)
-            default = format_python_default(stmt.value, constants)
             if stmt.target.id == "git_hash":
-                default = format_literal_default(get_git_commit_hash_default())
+                default = "<dynamic>"
+            else:
+                default = format_python_default(stmt.value, constants, source)
             section_args.append(
                 {
                     "name": stmt.target.id,
@@ -344,6 +361,11 @@ def compare_args(md_args, py_args):
     py_only = sorted(
         (name, None, py_args[name]) for name in set(py_args) - set(md_args)
     )
+    section_mismatches = sorted(
+        (name, md_args[name], py_args[name])
+        for name in set(md_args) & set(py_args)
+        if md_args[name]["section"] != py_args[name]["section"]
+    )
     description_mismatches = sorted(
         (name, md_args[name], py_args[name])
         for name in set(md_args) & set(py_args)
@@ -362,6 +384,7 @@ def compare_args(md_args, py_args):
     return {
         "md_only": md_only,
         "py_only": py_only,
+        "section_mismatches": section_mismatches,
         "description_mismatches": description_mismatches,
         "type_mismatches": type_mismatches,
         "default_mismatches": default_mismatches,
@@ -401,6 +424,12 @@ def print_report(md_args, py_args, py_paths, md_path, diff):
         print("Args only in Python sources:")
         for name, _, py_arg in diff["py_only"]:
             print(f"  - {name} ({format_py_location(py_arg)})")
+
+    if diff["section_mismatches"]:
+        print()
+        print("Section mismatches:")
+        for name, md_arg, py_arg in diff["section_mismatches"]:
+            print(f"  - {name}: md={md_arg['section']} py={py_arg['section']}")
 
     if diff["description_mismatches"]:
         print()
@@ -471,6 +500,8 @@ def main() -> int:
         help="Update the markdown file from the Python argument source files.",
     )
     args = parser.parse_args()
+    if args.sync and args.neox_only:
+        parser.error("--neox-only cannot be combined with --sync")
 
     py_paths = args.py
     if py_paths is None:
