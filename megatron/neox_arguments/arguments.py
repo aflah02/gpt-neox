@@ -1243,6 +1243,13 @@ class NeoXArgs(*BASE_CLASSES):
                 raise ValueError(error_message)
                 return False
 
+        if self.use_mup:
+            for name in ("mup_attn_temp", "mup_output_temp"):
+                if getattr(self, name) <= 0:
+                    raise ValueError(
+                        f"{name} must be greater than zero when use_mup is enabled"
+                    )
+
         # Checks.
         if self.hidden_size % self.num_attention_heads != 0 and not (
             "mamba" in self.attention_config
