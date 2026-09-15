@@ -412,6 +412,15 @@ class ParallelSelfAttention(nn.Module):
 
         self.rope_fusion = neox_args.rope_fusion
         self.attention_type = neox_args.attention_config[layer_number]
+        if (
+            neox_args.use_mup
+            and neox_args.mup_attn_temp != 1.0
+            and self.attention_type != "global"
+        ):
+            raise ValueError(
+                "Non-default mup_attn_temp is only supported with global attention, "
+                f"not {self.attention_type!r}"
+            )
         self.use_flash_attention = self.attention_type == "flash"
         self.use_triton = (
             self.use_flash_attention
