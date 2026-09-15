@@ -215,6 +215,7 @@ class ParallelLinear(nn.Module):
         ColumnParallelLinear, RowParallelLinear = get_parallel_linear(neox_args)
 
         self.is_rm = neox_args.train_impl == "rm"
+        self.mup_output_temp = neox_args.mup_output_temp if neox_args.use_mup else 1.0
         parallelism = neox_args.output_layer_parallelism if not self.is_rm else "row"
         if parallelism == "column":
             self.final_linear = ColumnParallelLinear(
@@ -260,6 +261,8 @@ class ParallelLinear(nn.Module):
 
     def forward(self, hidden_states):
         if not self.is_rm:
+            if self.mup_output_temp != 1.0:
+                hidden_states = hidden_states / self.mup_output_temp
             return self.final_linear(hidden_states)
         else:
             return self.rm_linear(hidden_states)
@@ -295,6 +298,9 @@ class ParallelSelfAttention(nn.Module):
         self.use_cache = use_cache
         self.attention_softmax_in_fp32 = neox_args.attention_softmax_in_fp32
         if self.apply_query_key_layer_scaling:
+            self.attention_softmax_in_fp32 = True
+        if neox_args.use_mup and neox_args.mup_attn_temp != 1.0:
+            # FusedScaleMaskSoftmax requires fp32 softmax when a scale is set.
             self.attention_softmax_in_fp32 = True
         self.layer_number = layer_number
         # Per attention head and per partition values.
@@ -368,6 +374,8 @@ class ParallelSelfAttention(nn.Module):
 
         if neox_args.use_mup:
             self.norm_factor = self.hidden_size_per_attention_head
+            if neox_args.mup_attn_temp != 1.0:
+                coeff = (coeff if coeff is not None else 1.0) / neox_args.mup_attn_temp
 
         self.rpe = rpe
 
