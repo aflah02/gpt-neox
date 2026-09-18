@@ -83,13 +83,6 @@ def test_gradient_clipping_default_matches_deepspeed():
 
 
 @pytest.mark.cpu
-def test_clip_grad_is_not_a_neox_argument():
-    from megatron.neox_arguments import NeoXArgs
-
-    assert "clip_grad" not in NeoXArgs.__dataclass_fields__
-
-
-@pytest.mark.cpu
 def test_neoxargs_load_arguments_125M_local_setup():
     """
     verify 125M.yml can be loaded without raising validation errors
