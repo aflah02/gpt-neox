@@ -56,7 +56,7 @@ except ImportError:
 
 
 class TERMSNorm(torch.nn.Module):
-    def __init__(self, dim, eps=1e-8, **kwargs):
+    def __init__(self, dim, eps=1e-8, bias=False, **kwargs):
         """
             A conditional wrapper to initialize an instance of Transformer-Engine's
             `RMSNorm` based on input
@@ -72,13 +72,19 @@ class TERMSNorm(torch.nn.Module):
             eps=self.eps,
             **kwargs,
         )
+        self.use_bias = bias
+        if self.use_bias:
+            self.offset = Parameter(torch.zeros_like(self.norm.weight))
 
     def forward(self, x):
-        return self.norm(x)
+        output = self.norm(x)
+        if self.use_bias:
+            output = output + self.offset
+        return output
 
 
 class TELayerNorm(torch.nn.Module):
-    def __init__(self, dim, eps=1.0e-5, **kwargs):
+    def __init__(self, dim, eps=1.0e-5, bias=True, **kwargs):
         """
             A conditional wrapper to initialize an instance of Transformer-Engine's
             `LayerNorm` based on input
@@ -94,9 +100,19 @@ class TELayerNorm(torch.nn.Module):
             eps=self.eps,
             **kwargs,
         )
+        if not bias:
+            _replace_parameter_with_zero_buffer(self.norm, "bias")
 
     def forward(self, x):
         return self.norm(x)
+
+
+def _replace_parameter_with_zero_buffer(module, name):
+    """Replace a kernel-required parameter with a non-persistent zero buffer."""
+
+    parameter = getattr(module, name)
+    delattr(module, name)
+    module.register_buffer(name, torch.zeros_like(parameter), persistent=False)
 
 
 class TELinear(te.pytorch.Linear):
@@ -242,6 +258,10 @@ class TELayerNormMLP(te.pytorch.LayerNormMLP):
             get_rng_state_tracker=get_cuda_rng_tracker,
             micro_batch_size=self.micro_batch_size,
         )
+        if self.normalization == "LayerNorm" and not getattr(
+            neox_args, "use_bias_in_norms", True
+        ):
+            _replace_parameter_with_zero_buffer(self, "layer_norm_bias")
 
 
 class TEColumnParallelLinear(te.pytorch.Linear):

@@ -12,27 +12,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
+
 import torch
 from torch.nn import LayerNorm as LayerNorm
 
 
 def get_norm(neox_args):
+    use_bias = getattr(neox_args, "use_bias_in_norms", True)
+
     if neox_args.norm == "rmsnorm":
         eps = neox_args.rms_norm_epsilon
         if neox_args.rmsnorm_fusion:
             from .fused_layer_norm import MixedFusedRMSNorm
 
-            norm = MixedFusedRMSNorm
+            norm = partial(MixedFusedRMSNorm, bias=use_bias)
         else:
-            norm = RMSNorm
+            norm = partial(RMSNorm, bias=use_bias)
     elif neox_args.norm == "layernorm":
         eps = neox_args.layernorm_epsilon
         if neox_args.layernorm_fusion:
             from .fused_layer_norm import MixedFusedLayerNorm
 
-            norm = MixedFusedLayerNorm
-        else:
+            norm = partial(MixedFusedLayerNorm, bias=use_bias)
+        elif use_bias:
             norm = LayerNorm
+        else:
+            norm = BiaslessLayerNorm
     elif neox_args.norm == "non_parametric_layernorm":
         eps = neox_args.layernorm_epsilon
         if neox_args.layernorm_fusion:
@@ -47,16 +53,32 @@ def get_norm(neox_args):
     elif neox_args.norm == "te_rmsnorm":
         from .transformer_engine import TERMSNorm
 
-        norm = TERMSNorm
+        norm = partial(TERMSNorm, bias=use_bias)
         eps = neox_args.rms_norm_epsilon
     elif neox_args.norm == "te_layernorm":
         from .transformer_engine import TELayerNorm
 
-        norm = TELayerNorm
+        norm = partial(TELayerNorm, bias=use_bias)
         eps = neox_args.layernorm_epsilon
     else:
         raise ValueError(f"norm {neox_args.norm} not recognized")
     return norm, eps
+
+
+class BiaslessLayerNorm(torch.nn.LayerNorm):
+    """LayerNorm with a learnable scale but no learnable offset.
+
+    This works with PyTorch versions from before ``torch.nn.LayerNorm`` gained
+    its ``bias`` argument.
+    """
+
+    def __init__(self, normalized_shape, eps=1e-5, elementwise_affine=True):
+        super().__init__(
+            normalized_shape=normalized_shape,
+            eps=eps,
+            elementwise_affine=elementwise_affine,
+        )
+        self.register_parameter("bias", None)
 
 
 class RMSNorm(torch.nn.Module):
@@ -93,10 +115,10 @@ class RMSNorm(torch.nn.Module):
         variance = x.pow(2).mean(-1, keepdim=True)
         x_normed = x * torch.rsqrt(variance + self.eps)
 
+        output = (self.scale * x_normed).to(dtype)
         if self.bias:
-            return self.scale * x_normed + self.offset
-
-        return (self.scale * x_normed).to(dtype)
+            output = output + self.offset
+        return output
 
 
 class ScaleNorm(torch.nn.Module):

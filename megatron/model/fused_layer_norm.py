@@ -40,6 +40,7 @@ class MixedFusedLayerNorm(torch.nn.Module):
         sequence_parallel=False,
         apply_layernorm_1p=False,
         mem_efficient_ln=True,
+        bias=True,
     ):
         super(MixedFusedLayerNorm, self).__init__()
 
@@ -89,7 +90,15 @@ class MixedFusedLayerNorm(torch.nn.Module):
         self.normalized_shape = torch.Size(normalized_shape)
         self.eps = eps
         self.weight = Parameter(torch.Tensor(*normalized_shape))
-        self.bias = Parameter(torch.Tensor(*normalized_shape))
+        if bias:
+            self.bias = Parameter(torch.Tensor(*normalized_shape))
+        else:
+            # Apex's affine kernels require a bias tensor. A non-persistent zero
+            # buffer preserves the fused path without adding a trainable bias or
+            # a checkpoint entry.
+            self.register_buffer(
+                "bias", torch.zeros(*normalized_shape), persistent=False
+            )
         self.reset_parameters()
         self.no_persist_layer_norm = no_persist_layer_norm
         self.sequence_parallel = sequence_parallel
@@ -162,6 +171,7 @@ class MixedFusedRMSNorm(torch.nn.Module):
         sequence_parallel=False,
         apply_rmsnorm_1p=False,
         mem_efficient_rms=True,
+        bias=False,
     ):
         super(MixedFusedRMSNorm, self).__init__()
 
@@ -211,13 +221,18 @@ class MixedFusedRMSNorm(torch.nn.Module):
             normalized_shape = (normalized_shape,)
         self.normalized_shape = torch.Size(normalized_shape)
         self.eps = eps
+        self.use_bias = bias
         self.scale = Parameter(torch.Tensor(*normalized_shape))
+        if self.use_bias:
+            self.offset = Parameter(torch.Tensor(*normalized_shape))
         self.reset_parameters()
         self.no_persist_layer_norm = no_persist_layer_norm
         self.sequence_parallel = sequence_parallel
 
         # set sequence parallelism flag on weight and bias parameters
         setattr(self.scale, "sequence_parallel", self.sequence_parallel)
+        if self.use_bias:
+            setattr(self.offset, "sequence_parallel", self.sequence_parallel)
 
     def reset_parameters(self):
 
@@ -225,6 +240,8 @@ class MixedFusedRMSNorm(torch.nn.Module):
             init.zeros_(self.scale)
         else:
             init.ones_(self.scale)
+        if self.use_bias:
+            init.zeros_(self.offset)
 
     def forward(self, input):
 
@@ -236,12 +253,14 @@ class MixedFusedRMSNorm(torch.nn.Module):
                 "This warning should only be triggered in the FusedRMSNorm unit tests."
             )
             # Latest pytorch actually supports F.rms_norm but I don't want to break builds so...
-            return F.layer_norm(input, self.normalized_shape, weight, None, self.eps)
+            output = F.layer_norm(
+                input, self.normalized_shape, weight, None, self.eps
+            )
 
         # Apex does not have versions yet (https://github.com/NVIDIA/apex/pull/1648), so we need to inspect
         # the function manually on whether the extra arg introduced in https://github.com/NVIDIA/apex/pull/1715 exists yet
-        if "memory_efficient" in inspect.getfullargspec(self.norm_fn.forward).args:
-            return self.norm_fn.apply(
+        elif "memory_efficient" in inspect.getfullargspec(self.norm_fn.forward).args:
+            output = self.norm_fn.apply(
                 input,
                 weight,
                 self.normalized_shape,
@@ -249,14 +268,10 @@ class MixedFusedRMSNorm(torch.nn.Module):
                 self.mem_efficient_rms,
             )
         else:
-            return self.norm_fn.apply(input, weight, self.normalized_shape, self.eps)
-
-            # Apex's fast layer norm function outputs a 'view' tensor (i.e., has
-            # a populated '_base' field). This will result in schedule.py's
-            # deallocate_output_tensor() throwing an error, so a viewless tensor is
-            # created to prevent this.
-            output = make_viewless_tensor(
-                inp=output, requires_grad=input.requires_grad, keep_graph=True
+            output = self.norm_fn.apply(
+                input, weight, self.normalized_shape, self.eps
             )
 
-            return output
+        if self.use_bias:
+            output = output + self.offset
+        return output

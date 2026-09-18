@@ -44,6 +44,7 @@ def get_params_for_weight_decay_optimization(module: Any, neox_args: Any):
             type(module_).__name__
             in [
                 "LayerNorm",
+                "BiaslessLayerNorm",
                 "RMSNorm",
                 "ScaleNorm",
                 "TELayerNorm",

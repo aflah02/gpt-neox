@@ -302,6 +302,9 @@ class RWKVResidualLayer(nn.Module):
 
         self.ln1 = nn.LayerNorm(neox_args.hidden_size)
         self.ln2 = nn.LayerNorm(neox_args.hidden_size)
+        if not getattr(neox_args, "use_bias_in_norms", True):
+            self.ln1.register_parameter("bias", None)
+            self.ln2.register_parameter("bias", None)
 
         self.att = RWKV_TimeMix(neox_args, layer_number)
 
