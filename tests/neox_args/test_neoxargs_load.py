@@ -63,6 +63,33 @@ def run_neox_args_load_test(yaml_files):
 
 
 @pytest.mark.cpu
+def test_gradient_clipping_is_passed_to_deepspeed():
+    """An explicitly configured value must not be dropped as a NeoX default."""
+    from megatron.neox_arguments import NeoXArgs
+
+    args_loaded = NeoXArgs.from_ymls(
+        get_configs_with_path(["125M.yml", "local_setup.yml", "cpu_mock_config.yml"])
+    )
+
+    assert args_loaded.gradient_clipping == 1.0
+    assert args_loaded.deepspeed_config["gradient_clipping"] == 1.0
+
+
+@pytest.mark.cpu
+def test_gradient_clipping_default_matches_deepspeed():
+    from megatron.neox_arguments.deepspeed_args import NeoXArgsDeepspeedConfig
+
+    assert NeoXArgsDeepspeedConfig().gradient_clipping == 0.0
+
+
+@pytest.mark.cpu
+def test_clip_grad_is_not_a_neox_argument():
+    from megatron.neox_arguments import NeoXArgs
+
+    assert "clip_grad" not in NeoXArgs.__dataclass_fields__
+
+
+@pytest.mark.cpu
 def test_neoxargs_load_arguments_125M_local_setup():
     """
     verify 125M.yml can be loaded without raising validation errors
