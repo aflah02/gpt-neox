@@ -76,10 +76,26 @@ def test_gradient_clipping_is_passed_to_deepspeed():
 
 
 @pytest.mark.cpu
+def test_deprecated_clip_grad_does_not_break_config_loading():
+    """Legacy clip_grad configs should load without changing clipping behavior."""
+    from megatron.neox_arguments import NeoXArgs
+
+    args_loaded = NeoXArgs.from_ymls(
+        get_configs_with_path(["125M.yml", "local_setup.yml", "cpu_mock_config.yml"]),
+        overwrite_values={"clip_grad": 0.5},
+    )
+
+    assert args_loaded.gradient_clipping == 1.0
+    assert args_loaded.deepspeed_config["gradient_clipping"] == 1.0
+    assert not hasattr(args_loaded, "clip_grad")
+
+
+@pytest.mark.cpu
 def test_gradient_clipping_default_matches_deepspeed():
+    from deepspeed.runtime.constants import GRADIENT_CLIPPING_DEFAULT
     from megatron.neox_arguments.deepspeed_args import NeoXArgsDeepspeedConfig
 
-    assert NeoXArgsDeepspeedConfig().gradient_clipping == 0.0
+    assert NeoXArgsDeepspeedConfig().gradient_clipping == GRADIENT_CLIPPING_DEFAULT
 
 
 @pytest.mark.cpu
