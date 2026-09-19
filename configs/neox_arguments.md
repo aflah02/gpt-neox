@@ -1779,16 +1779,16 @@ Training Arguments
 
     Default = 1.0
 
-    Dense-attention temperature used when use_mup is enabled. Attention scores are
-    divided by this value before softmax. Must be greater than zero. Non-default
-    values require global attention.
+    μP attention temperature. Used when use_mup is enabled. Attention scores are
+    scaled by 1 / (head_dim * mup_attn_temp) before softmax. Must be greater than
+    zero. Global attention is currently the only supported attention backend.
 
 - **mup_output_temp**: float
 
     Default = 1.0
 
-    Output temperature used when use_mup is enabled. Language-model logits are
-    divided by this value. Must be greater than zero.
+    μP output temperature. Used when use_mup is enabled. Language-model logits
+    are divided by this value. Must be greater than zero.
 
 - **mup_embedding_mult**: float
 
