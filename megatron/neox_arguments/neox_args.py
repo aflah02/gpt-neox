@@ -251,6 +251,26 @@ class NeoXArgsModel(NeoXArgsTemplate):
         [[[`global`], n_layers]]
     """
 
+    pos_emb_config: list = None
+
+    """
+    Positional embedding configuration for gpt-neox
+
+    The first item in the list specifies the positional embedding type(s), and should be a list of strings. The second item
+    specifies the number of times to repeat those positional embedding types in the full list.
+
+    positional embedding type choices: [learned, rotary, sinusoidal, rpe, alibi, none]
+
+    So a 12 layer network with only rotary positional embeddings could be specified like:
+        [[[`rotary`], 12]]
+
+    or a 12 layer network with alternating rotary / alibi like:
+        [[[`rotary`, `alibi`], 6]]
+
+    If none is specified, this defaults to using the global `pos_emb` parameter for all layers:
+        [[[pos_emb], n_layers]]
+    """
+
     sparsity_config: dict = None
 
     """

@@ -283,6 +283,7 @@ class ParallelSelfAttention(nn.Module):
         rotary=False,
         use_cache=False,
         parallel_output=False,
+        layer_pos_emb=None,
     ):
         super().__init__()
 
@@ -306,7 +307,7 @@ class ParallelSelfAttention(nn.Module):
         self.num_attention_heads_per_partition = mpu.divide(
             neox_args.num_attention_heads, world_size
         )
-        self.pos_emb = neox_args.pos_emb
+        self.pos_emb = layer_pos_emb if layer_pos_emb is not None else neox_args.pos_emb
 
         self.use_qk_layernorm = neox_args.use_qk_layernorm
         if self.use_qk_layernorm:
@@ -922,6 +923,7 @@ class ParallelTransformerLayer(nn.Module):
         rpe=None,
         rotary=False,
         use_cache=False,
+        layer_pos_emb=None,
     ):
 
         super().__init__()
@@ -972,6 +974,7 @@ class ParallelTransformerLayer(nn.Module):
                 use_cache=self.use_cache,
                 rotary=rotary,
                 parallel_output=self.gpt_j_residual,
+                layer_pos_emb=layer_pos_emb,
             )
 
         else:
@@ -985,6 +988,7 @@ class ParallelTransformerLayer(nn.Module):
                 use_cache=self.use_cache,
                 rotary=rotary,
                 parallel_output=self.gpt_j_residual,
+                layer_pos_emb=layer_pos_emb,
             )
 
         # Layernorm on the output of the attention layer.

@@ -353,6 +353,37 @@ def expand_attention_types(attention_config, num_layers):
     return newlist
 
 
+def expand_pos_emb_types(pos_emb_config, num_layers):
+    """
+    Expands a `pos_emb_config` list in the following format:
+
+        [
+        [['pos_emb_type_1', ..., `pos_emb_type_n`], 12]
+        ]
+
+    to a flattened list of length `num_layers`.
+
+    :param pos_emb_config: positional embedding configuration list
+    :param num_layers: number of layers
+    :return: expanded list of positional embedding types
+    """
+    # if only strings are found in the config, we assume it's already expanded
+    if all([isinstance(i, str) for i in pos_emb_config]):
+        return pos_emb_config
+    newlist = []
+    for item in pos_emb_config:
+        # instead of specifying a number - we can specify 'all' to extend this pattern across all layers
+        if item[1] == "all":
+            assert num_layers % len(item[0]) == 0, (
+                f"Number of layers ({num_layers}) is not divisible by the length "
+                f"of pattern: {item[0]}"
+            )
+            return item[0] * (num_layers // len(item[0]))
+        for _ in range(item[1]):
+            newlist.extend(item[0])
+    return newlist
+
+
 class OverflowMonitor:
 
     """
