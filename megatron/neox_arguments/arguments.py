@@ -19,6 +19,7 @@ import yaml
 import json
 import logging
 import copy
+import math
 import torch
 import argparse
 from pkg_resources import packaging
@@ -110,12 +111,14 @@ def _validate_norm_placement(norm_placement, gpt_j_residual, te_layernorm_mlp):
         "pre_norm",
         "post_norm_outside_residual",
         "post_norm_inside_residual",
+        "sandwich_norm",
     ):
         raise ValueError(
             f"Invalid norm_placement {norm_placement!r}; expected 'pre_norm', "
-            "'post_norm_outside_residual', or 'post_norm_inside_residual'."
+            "'post_norm_outside_residual', 'post_norm_inside_residual', "
+            "or 'sandwich_norm'."
         )
-    if norm_placement != "pre_norm":
+    if norm_placement in ("post_norm_outside_residual", "post_norm_inside_residual"):
         if gpt_j_residual:
             raise ValueError(
                 "Post-norm placements require `gpt_j_residual=False`: "
@@ -126,6 +129,67 @@ def _validate_norm_placement(norm_placement, gpt_j_residual, te_layernorm_mlp):
             raise ValueError(
                 "Post-norm placements require `te_layernorm_mlp=False`: "
                 "Transformer Engine LayerNormMLP fuses normalization before the MLP."
+            )
+
+
+def _validate_sandwich_norm_args(neox_args):
+    """Validate sandwich norms before allocating model parameters or kernels."""
+    depth_init = neox_args.sandwich_norm_depth_init
+    if neox_args.norm_placement != "sandwich_norm":
+        if depth_init is not None:
+            raise ValueError(
+                "`sandwich_norm_depth_init` requires `norm_placement='sandwich_norm'`."
+            )
+        return
+
+    if neox_args.norm not in ("layernorm", "rmsnorm"):
+        raise ValueError(
+            "Sandwich norm requires native `norm='layernorm'` or 'rmsnorm'."
+        )
+    if neox_args.moe_num_experts > 1:
+        raise ValueError("Sandwich norm requires dense MLPs (`moe_num_experts=1`).")
+    if any(kind not in ("global", "flash") for kind in neox_args.attention_config):
+        raise ValueError(
+            "Sandwich norm supports only native dense transformer blocks with "
+            "global/flash attention; other attention/block types are unsupported."
+        )
+    te_options = (
+        "te_mha",
+        "te_fp8_mha",
+        "te_layernorm_mlp",
+        "te_columnparallel",
+        "te_rowparallel",
+    )
+    enabled_te = [name for name in te_options if getattr(neox_args, name)]
+    if enabled_te:
+        raise ValueError(
+            "Sandwich norm does not support Transformer Engine layers; disable "
+            + ", ".join(enabled_te)
+            + "."
+        )
+
+    if depth_init is not None:
+        if neox_args.norm != "rmsnorm":
+            raise ValueError("`sandwich_norm_depth_init` requires `norm='rmsnorm'`.")
+        if not isinstance(depth_init, dict) or set(depth_init) != {"attention", "mlp"}:
+            raise ValueError(
+                "`sandwich_norm_depth_init` must be a mapping with exactly "
+                "'attention' and 'mlp' keys."
+            )
+        for branch, gain in depth_init.items():
+            if (
+                isinstance(gain, bool)
+                or not isinstance(gain, (int, float))
+                or not math.isfinite(gain)
+                or gain < 0
+            ):
+                raise ValueError(
+                    f"`sandwich_norm_depth_init.{branch}` must be a finite, "
+                    "non-negative number."
+                )
+        if neox_args.num_layers is None or neox_args.num_layers <= 0:
+            raise ValueError(
+                "`sandwich_norm_depth_init` requires positive `num_layers`."
             )
 
 
@@ -1401,6 +1465,7 @@ class NeoXArgs(*BASE_CLASSES):
         _validate_norm_placement(
             self.norm_placement, self.gpt_j_residual, self.te_layernorm_mlp
         )
+        _validate_sandwich_norm_args(self)
 
         _validate_qk_norm_args(
             use_qk_norm=self.use_qk_norm,

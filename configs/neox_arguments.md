@@ -372,7 +372,7 @@ Model Arguments
 
     Normalization layer to use. Choose from "layernorm", "rmsnorm", "non_parametric_layernorm", "scalenorm", "te_rmsnorm", "te_layernorm".
 
-- **norm_placement**: typing.Literal['pre_norm', 'post_norm_outside_residual', 'post_norm_inside_residual']
+- **norm_placement**: typing.Literal['pre_norm', 'post_norm_outside_residual', 'post_norm_inside_residual', 'sandwich_norm']
 
     Default = pre_norm
 
@@ -381,9 +381,32 @@ Model Arguments
         - "pre_norm": x + dropout(f(N(x))) (the default).
         - "post_norm_outside_residual": N(x + dropout(f(x))).
         - "post_norm_inside_residual": x + dropout(N(f(x))) (OLMo2 style).
+        - "sandwich_norm": x + dropout(N_out(f(N_in(x)))) with independent
+          input and output norms for each branch (Gemma 2 style).
     Output projection biases are included in f(x), before post-normalization.
     Post-norm placements require `gpt_j_residual=False` and
     `te_layernorm_mlp=False`. The model's final output norm is unchanged.
+    Sandwich norm supports sequential and GPT-J residuals with native dense
+    transformer blocks, global/flash attention, and LayerNorm/RMSNorm (including
+    native norm fusion). Transformer Engine, MoE, and other block types are not
+    supported. Each GPT-J branch is reduced across tensor-parallel ranks before
+    its output norm, requiring two reductions instead of one combined reduction.
+    For plain sandwich norm set `norm_placement: sandwich_norm` and omit
+    `sandwich_norm_depth_init`.
+
+- **sandwich_norm_depth_init**: typing.Optional[dict]
+
+    Default = None
+
+    Optional RMSNorm output-gain initialization for `norm_placement: sandwich_norm`.
+    Requires exactly `attention` and `mlp` keys with finite, non-negative numeric
+    constants. Each output norm's gain is initialized to its constant divided by
+    sqrt(num_layers), using the total model depth. Input norms are unchanged.
+    This is applied only at construction; checkpoint loads restore learned gains.
+    Omit this mapping for plain sandwich norm (also supported with LayerNorm).
+    Trinity example: `sandwich_norm_depth_init: {attention: 1.0, mlp: 1.0}`.
+    Pangu Ultra example: `sandwich_norm_depth_init: {attention: 0.283, mlp: 0.432}`.
+    Both examples require `norm: rmsnorm` and `norm_placement: sandwich_norm`.
 
 - **layernorm_fusion**: bool
 

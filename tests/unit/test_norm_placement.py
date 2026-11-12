@@ -89,8 +89,9 @@ def test_pre_norm_accepts_existing_residual_and_mlp_options(
 class Projection(torch.nn.Module):
     """Small CPU sublayer exposing the same deferred-bias interface as NeoX."""
 
-    def __init__(self, neox_args, **kwargs):
+    def __init__(self, neox_args, use_bias=None, **kwargs):
         super().__init__()
+        self.parallel_output = kwargs.get("parallel_output", False)
         self.weight = torch.nn.Parameter(
             torch.tensor(
                 [
@@ -103,7 +104,7 @@ class Projection(torch.nn.Module):
         )
         self.bias = (
             torch.nn.Parameter(torch.tensor([0.3, -0.2, 0.5, 0.1]))
-            if neox_args.use_bias_in_mlp
+            if (neox_args.use_bias_in_mlp if use_bias is None else use_bias)
             else None
         )
 
@@ -113,7 +114,9 @@ class Projection(torch.nn.Module):
 
 class Attention(Projection):
     def __init__(self, neox_args, use_cache=False, **kwargs):
-        super().__init__(neox_args)
+        super().__init__(
+            neox_args, use_bias=neox_args.use_bias_in_attn_linear, **kwargs
+        )
         self.use_cache = use_cache
         self.seen_past = []
 
@@ -186,6 +189,7 @@ def test_norm_placement_forward_and_backward(
         placement,
         norm=norm,
         use_bias_in_mlp=with_bias,
+        use_bias_in_attn_linear=with_bias,
         bias_dropout_fusion=fused,
     )
     reference = copy.deepcopy(layer)
@@ -215,6 +219,7 @@ def test_post_norm_dropout(monkeypatch, placement, with_bias, fused, training):
         monkeypatch,
         placement,
         use_bias_in_mlp=with_bias,
+        use_bias_in_attn_linear=with_bias,
         bias_dropout_fusion=fused,
     )
     layer.hidden_dropout = 0.4

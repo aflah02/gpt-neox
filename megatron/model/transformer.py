@@ -31,7 +31,10 @@ from importlib.metadata import version
 
 from .norms import get_norm
 from megatron import mpu
-from megatron.neox_arguments.arguments import _validate_norm_placement
+from megatron.neox_arguments.arguments import (
+    _validate_norm_placement,
+    _validate_sandwich_norm_args,
+)
 from megatron.model.fused_softmax import FusedScaleMaskSoftmax
 from megatron.model.activations import get_activation
 from megatron.model.utils import (
@@ -1158,6 +1161,8 @@ class ParallelTransformerLayer(nn.Module):
         _validate_norm_placement(
             self.norm_placement, neox_args.gpt_j_residual, neox_args.te_layernorm_mlp
         )
+        _validate_sandwich_norm_args(neox_args)
+        self.sandwich_norm = self.norm_placement == "sandwich_norm"
 
         norm, eps = get_norm(neox_args)
 
@@ -1180,7 +1185,10 @@ class ParallelTransformerLayer(nn.Module):
         if self.num_experts > 1:
             from megatron.model.moe import ParallelDroplessMoE
 
-        if self.gpt_j_residual:
+        # Output norms need each complete branch output. Let row-parallel
+        # projections reduce each branch separately when sandwich norm is used.
+        parallel_output = self.gpt_j_residual and not self.sandwich_norm
+        if parallel_output:
             # GPT-J style layers allow us to defer the reduction of results across TP ranks until the end of the two sublayers.
             # the reduction we use is a simple allreduce for pure Tensor Parallel,
             # but needs to be a reduce-scatter when using Megatron-style Sequence Parallel (LN sharding.)
@@ -1203,7 +1211,7 @@ class ParallelTransformerLayer(nn.Module):
                 rpe=rpe,
                 use_cache=self.use_cache,
                 rotary=rotary,
-                parallel_output=self.gpt_j_residual,
+                parallel_output=parallel_output,
             )
 
         else:
@@ -1216,12 +1224,27 @@ class ParallelTransformerLayer(nn.Module):
                 rpe=rpe,
                 use_cache=self.use_cache,
                 rotary=rotary,
-                parallel_output=self.gpt_j_residual,
+                parallel_output=parallel_output,
             )
 
         # Second sublayer norm (before the MLP for pre-norm, after it for post-norm).
         if not self.neox_args.te_layernorm_mlp:
             self.post_attention_layernorm = norm(neox_args.hidden_size, eps=eps)
+
+        if self.sandwich_norm:
+            self.attention_output_layernorm = norm(neox_args.hidden_size, eps=eps)
+            self.mlp_output_layernorm = norm(neox_args.hidden_size, eps=eps)
+            if neox_args.sandwich_norm_depth_init is not None:
+                # Construction-time initialization only: load_state_dict restores
+                # learned gains directly, with no forward-time depth multiplier.
+                depth_scale = math.sqrt(neox_args.num_layers)
+                with torch.no_grad():
+                    self.attention_output_layernorm.scale.fill_(
+                        neox_args.sandwich_norm_depth_init["attention"] / depth_scale
+                    )
+                    self.mlp_output_layernorm.scale.fill_(
+                        neox_args.sandwich_norm_depth_init["mlp"] / depth_scale
+                    )
 
         # MLP
         def get_mlp(**kw):
@@ -1229,7 +1252,7 @@ class ParallelTransformerLayer(nn.Module):
                 neox_args=neox_args,
                 init_method=init_method,
                 output_layer_init_method=output_layer_init_method,
-                parallel_output=self.gpt_j_residual,
+                parallel_output=parallel_output,
                 multiple_of=neox_args.mlp_multiple_of,
                 **kw,
             )
@@ -1242,7 +1265,7 @@ class ParallelTransformerLayer(nn.Module):
                 neox_args=neox_args,
                 init_method=init_method,
                 output_layer_init_method=output_layer_init_method,
-                parallel_output=self.gpt_j_residual,
+                parallel_output=parallel_output,
                 multiple_of=neox_args.mlp_multiple_of,
                 **kw,
             )
@@ -1272,9 +1295,9 @@ class ParallelTransformerLayer(nn.Module):
             fn = get_bias_dropout_add(self.training)
         return fn
 
-    def _post_norm_residual(self, output, bias, residual, norm):
+    def _output_norm_residual(self, output, bias, residual, norm):
         """Apply projection bias, post-normalization, dropout, and the residual."""
-        if self.norm_placement == "post_norm_inside_residual":
+        if self.sandwich_norm or self.norm_placement == "post_norm_inside_residual":
             if bias is not None:
                 output = output + bias
             output = norm(output)
@@ -1298,6 +1321,29 @@ class ParallelTransformerLayer(nn.Module):
             output = norm(output)
         return output
 
+    def _forward_sandwich_norm(self, x, attention_mask, layer_past):
+        attention_input = self.input_layernorm(x)
+        if self.gpt_j_residual:
+            mlp_input = (
+                attention_input if self.gpt_j_tied else self.post_attention_layernorm(x)
+            )
+
+        attention_output, attention_bias = self.attention(
+            attention_input, attention_mask, layer_past=layer_past
+        )
+        if self.use_cache:
+            attention_output, presents = attention_output
+            self.layer_past = presents
+        residual = self._output_norm_residual(
+            attention_output, attention_bias, x, self.attention_output_layernorm
+        )
+        if not self.gpt_j_residual:
+            mlp_input = self.post_attention_layernorm(residual)
+        mlp_output, mlp_bias = self.mlp(mlp_input)
+        return self._output_norm_residual(
+            mlp_output, mlp_bias, residual, self.mlp_output_layernorm
+        )
+
     def _forward_post_norm(self, x, attention_mask, layer_past):
         # Attention/MLP outputs have already been reduced across tensor-parallel
         # ranks (or reduce-scattered for sequence parallelism) before normalization.
@@ -1308,12 +1354,12 @@ class ParallelTransformerLayer(nn.Module):
             attention_output, presents = attention_output
             self.layer_past = presents
 
-        x = self._post_norm_residual(
+        x = self._output_norm_residual(
             attention_output, attention_bias, x, self.input_layernorm
         )
         # Dense MLP and MoE share the same output/bias interface.
         mlp_output, mlp_bias = self.mlp(x)
-        return self._post_norm_residual(
+        return self._output_norm_residual(
             mlp_output, mlp_bias, x, self.post_attention_layernorm
         )
 
@@ -1335,7 +1381,9 @@ class ParallelTransformerLayer(nn.Module):
             fp8_context = nullcontext()
 
         with fp8_context:
-            if self.gpt_j_residual:
+            if self.sandwich_norm:
+                output = self._forward_sandwich_norm(x, attention_mask, layer_past)
+            elif self.gpt_j_residual:
                 # pseudocode:
                 # x = x + attn(ln(x)) + mlp(ln(x))
                 # this means we can avoid doing the allreduce in the attn / mlp outputs
