@@ -31,6 +31,7 @@ from importlib.metadata import version
 
 from .norms import get_norm
 from megatron import mpu
+from megatron.neox_arguments.arguments import _validate_norm_placement
 from megatron.model.fused_softmax import FusedScaleMaskSoftmax
 from megatron.model.activations import get_activation
 from megatron.model.utils import (
@@ -1153,10 +1154,15 @@ class ParallelTransformerLayer(nn.Module):
         super().__init__()
         self.layer_number = layer_number
         self.neox_args = neox_args
+        self.norm_placement = neox_args.norm_placement
+        _validate_norm_placement(
+            self.norm_placement, neox_args.gpt_j_residual, neox_args.te_layernorm_mlp
+        )
 
         norm, eps = get_norm(neox_args)
 
-        # Layernorm on the input data.
+        # Keep the existing norm names for checkpoint compatibility. In post-norm
+        # layers these normalize the attention and MLP outputs, respectively.
         self.input_layernorm = norm(neox_args.hidden_size, eps=eps)
         self.use_cache = use_cache
 
@@ -1213,9 +1219,7 @@ class ParallelTransformerLayer(nn.Module):
                 parallel_output=self.gpt_j_residual,
             )
 
-        # Layernorm on the output of the attention layer.
-        # If GPT-J residuals are used, this is surpurfulous but leaving it in
-        # leads to cleaner code
+        # Second sublayer norm (before the MLP for pre-norm, after it for post-norm).
         if not self.neox_args.te_layernorm_mlp:
             self.post_attention_layernorm = norm(neox_args.hidden_size, eps=eps)
 
@@ -1267,6 +1271,51 @@ class ParallelTransformerLayer(nn.Module):
         else:
             fn = get_bias_dropout_add(self.training)
         return fn
+
+    def _post_norm_residual(self, output, bias, residual, norm):
+        """Apply projection bias, post-normalization, dropout, and the residual."""
+        if self.norm_placement == "post_norm_inside_residual":
+            if bias is not None:
+                output = output + bias
+            output = norm(output)
+            bias = None
+
+        with torch.enable_grad() if self.training else nullcontext():
+            if bias is None:
+                output = (
+                    F.dropout(output, p=self.hidden_dropout, training=self.training)
+                    + residual
+                )
+            else:
+                output = self._get_bias_dropout()(
+                    output,
+                    bias=bias.expand_as(output),
+                    residual=residual,
+                    prob=self.hidden_dropout,
+                )
+
+        if self.norm_placement == "post_norm_outside_residual":
+            output = norm(output)
+        return output
+
+    def _forward_post_norm(self, x, attention_mask, layer_past):
+        # Attention/MLP outputs have already been reduced across tensor-parallel
+        # ranks (or reduce-scattered for sequence parallelism) before normalization.
+        attention_output, attention_bias = self.attention(
+            x, attention_mask, layer_past=layer_past
+        )
+        if self.use_cache:
+            attention_output, presents = attention_output
+            self.layer_past = presents
+
+        x = self._post_norm_residual(
+            attention_output, attention_bias, x, self.input_layernorm
+        )
+        # Dense MLP and MoE share the same output/bias interface.
+        mlp_output, mlp_bias = self.mlp(x)
+        return self._post_norm_residual(
+            mlp_output, mlp_bias, x, self.post_attention_layernorm
+        )
 
     def forward(self, x, attention_mask, layer_past=None):
         layer_past = layer_past if layer_past is not None else self.layer_past
@@ -1340,6 +1389,8 @@ class ParallelTransformerLayer(nn.Module):
 
                 # output = (x + attn(ln(x)) + mlp(ln(x))
                 output = residual + self.reduce(output)
+            elif self.norm_placement != "pre_norm":
+                output = self._forward_post_norm(x, attention_mask, layer_past)
             else:
                 # pseudocode:
                 # x = x + attn(ln1(x))

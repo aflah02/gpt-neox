@@ -174,6 +174,20 @@ class NeoXArgsModel(NeoXArgsTemplate):
     Normalization layer to use. Choose from "layernorm", "rmsnorm", "non_parametric_layernorm", "scalenorm", "te_rmsnorm", "te_layernorm".
     """
 
+    norm_placement: Literal[
+        "pre_norm", "post_norm_outside_residual", "post_norm_inside_residual"
+    ] = "pre_norm"
+    """
+    Normalization placement in each transformer layer. For each attention or MLP
+    sublayer f, with residual input x and normalization N:
+        - "pre_norm": x + dropout(f(N(x))) (the default).
+        - "post_norm_outside_residual": N(x + dropout(f(x))).
+        - "post_norm_inside_residual": x + dropout(N(f(x))) (OLMo2 style).
+    Output projection biases are included in f(x), before post-normalization.
+    Post-norm placements require `gpt_j_residual=False` and
+    `te_layernorm_mlp=False`. The model's final output norm is unchanged.
+    """
+
     layernorm_fusion: bool = False
     """
     Use the fused layer norm kernel when `norm` or `qk_norm` is `layernorm`.

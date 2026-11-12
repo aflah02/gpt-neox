@@ -104,6 +104,31 @@ AUTOTUNING_ARGS = (
 DEPRECATED_ARGS = {"clip_grad": "gradient_clipping", "sparse_attention": None}
 
 
+def _validate_norm_placement(norm_placement, gpt_j_residual, te_layernorm_mlp):
+    """Reject norm placements that the residual or fused MLP path cannot apply."""
+    if norm_placement not in (
+        "pre_norm",
+        "post_norm_outside_residual",
+        "post_norm_inside_residual",
+    ):
+        raise ValueError(
+            f"Invalid norm_placement {norm_placement!r}; expected 'pre_norm', "
+            "'post_norm_outside_residual', or 'post_norm_inside_residual'."
+        )
+    if norm_placement != "pre_norm":
+        if gpt_j_residual:
+            raise ValueError(
+                "Post-norm placements require `gpt_j_residual=False`: "
+                "GPT-J parallel residuals defer the tensor-parallel reduction "
+                "until after both sublayers."
+            )
+        if te_layernorm_mlp:
+            raise ValueError(
+                "Post-norm placements require `te_layernorm_mlp=False`: "
+                "Transformer Engine LayerNormMLP fuses normalization before the MLP."
+            )
+
+
 def _validate_qk_norm_args(
     use_qk_norm,
     qk_norm,
@@ -1372,6 +1397,10 @@ class NeoXArgs(*BASE_CLASSES):
             logging.error(error_message)
             raise ValueError(error_message)
             return False
+
+        _validate_norm_placement(
+            self.norm_placement, self.gpt_j_residual, self.te_layernorm_mlp
+        )
 
         _validate_qk_norm_args(
             use_qk_norm=self.use_qk_norm,
