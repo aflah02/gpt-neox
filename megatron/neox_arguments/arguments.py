@@ -1424,6 +1424,15 @@ class NeoXArgs(*BASE_CLASSES):
             raise ValueError(error_message)
             return False
 
+        if self.manual_gc_interval is not None and self.manual_gc_interval < 0:
+            error_message = (
+                f"{FAIL}"
+                + self.__class__.__name__
+                + ".validate_values() manual_gc_interval must be 0 (automatic garbage collection) or a positive number of iterations"
+            )
+            logging.error(error_message)
+            raise ValueError(error_message)
+
         # Parameters sharing does not work with torch DDP.
         if (self.num_unique_layers is not None) and (self.num_layers is not None):
             if not (self.num_unique_layers <= self.num_layers):

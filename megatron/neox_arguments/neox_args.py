@@ -1433,6 +1433,11 @@ class NeoXArgsTraining(NeoXArgsTemplate):
     Exit the program after the iteration is divisible by this value.
     """
 
+    manual_gc_interval: int = 0
+    """
+    Interval, in training iterations, between manual runs of Python's garbage collector. 0 (the default) keeps automatic garbage collection. A positive value disables automatic collection inside the training loop and instead runs a full collection every `manual_gc_interval` iterations, so that all ranks collect at the same iteration rather than one rank pausing while the others wait at the next collective. Automatic collection is restored during in-loop validation and when training exits. Unreachable reference cycles, and any host memory or CUDA tensors they hold, are only freed at the next scheduled collection, so larger intervals can increase memory usage. Negative values are rejected.
+    """
+
     attention_dropout: float = 0.0
     """
     Post attention dropout probability.
