@@ -22,7 +22,6 @@ import torch
 import torch.nn as nn
 from collections import defaultdict
 
-from functools import partial
 from megatron.model.utils import Lambda, SequentialWrapper, recursive_setattr
 from megatron.model.norms import get_norm
 from megatron.model.parameterization import (
@@ -60,14 +59,19 @@ def gpt2_attention_mask_func(attention_scores, ltor_mask):
     return attention_scores
 
 
+# Logged when the z-loss is active: the loss before the z-loss, and the z-loss term.
+Z_LOSS_LOG_NAMES = ("lm_loss_without_z_loss", "z_loss")
+
+
 def cross_entropy(
-    output, labels, _fp16=False, _fused=False, z_loss=0.0, return_z_loss=False
+    output, labels, _fp16=False, _fused=False, z_loss=0.0, return_loss_parts=False
 ):
     """Masked mean cross entropy of vocab-parallel logits, plus the optional z-loss.
 
     The z-loss, z_loss * mean(log(Z)^2) over loss-masked tokens, is added only
     while gradients are enabled, so evaluation reports plain cross entropy. With
-    return_z_loss, also returns the added z-loss term, or None if none was added.
+    return_loss_parts, returns (loss, loss without the z-loss, z-loss term), where
+    the last two are None if no z-loss was added.
     """
     """
     if self.fp16_lm_cross_entropy:
@@ -108,14 +112,15 @@ def cross_entropy(
     loss_mask = loss_mask.view(-1)
     num_tokens = loss_mask.sum()
     loss = torch.sum(losses.view(-1) * loss_mask) / num_tokens
-    z_loss_term = None
+    loss_without_z_loss, z_loss_term = None, None
     if use_z_loss:
+        loss_without_z_loss = loss
         z_loss_term = (
             z_loss * torch.sum(log_z.view(-1).square() * loss_mask) / num_tokens
         )
         loss = loss + z_loss_term
-    if return_z_loss:
-        return loss, z_loss_term
+    if return_loss_parts:
+        return loss, loss_without_z_loss, z_loss_term
     return loss
 
 
@@ -175,15 +180,11 @@ class GPT2ModelPipe(PipelineModule, torch.nn.Module):
 
         self.specs = []
         self.init_specs()  # initializes the layer specs (basically a fancy nn.Sequential)
+        self._z_loss_parts = None
 
         super().__init__(
             layers=self.specs,
-            loss_fn=partial(
-                cross_entropy,
-                _fp16=self.neox_args.fp16_lm_cross_entropy,
-                _fused=self.neox_args.cross_entropy_fusion,
-                z_loss=self.neox_args.z_loss,
-            ),
+            loss_fn=self._loss_fn,
             topology=topology,
             activation_checkpoint_interval=self.neox_args.checkpoint_num_layers
             if self.neox_args.checkpoint_activations
@@ -195,6 +196,36 @@ class GPT2ModelPipe(PipelineModule, torch.nn.Module):
                 "ParallelMambaResidualLayerPipe",
             ],
         )
+
+    def _loss_fn(self, output, labels):
+        loss, loss_without_z_loss, z_loss = cross_entropy(
+            output,
+            labels,
+            _fp16=self.neox_args.fp16_lm_cross_entropy,
+            _fused=self.neox_args.cross_entropy_fusion,
+            z_loss=self.neox_args.z_loss,
+            return_loss_parts=True,
+        )
+        if z_loss is not None:
+            self._z_loss_parts = dict(
+                zip(Z_LOSS_LOG_NAMES, (loss_without_z_loss.detach(), z_loss.detach()))
+            )
+        return loss
+
+    def get_additional_losses(self):
+        """Values for DeepSpeed's pipeline engine to report alongside the loss.
+
+        After each micro-batch, the engine reads these on the last stage. It
+        averages them over micro-batches and data-parallel ranks, like the loss,
+        and sends them to every stage. Every stage must return the same names, so
+        stages without the loss, and evaluation before any training step, return
+        zero placeholders.
+        """
+        if self.neox_args.z_loss == 0:
+            return None
+        if self._z_loss_parts is None:
+            return {name: torch.zeros(()) for name in Z_LOSS_LOG_NAMES}
+        return self._z_loss_parts
 
     def insert_layers(
         self, layers: Union[nn.Module, nn.ModuleList, nn.Sequential, List], idx

@@ -619,15 +619,16 @@ def forward_step(
         ):
             loss_mask = loss_mask[:, : neox_args.curriculum_seqlen].contiguous()
             labels = labels[:, : neox_args.curriculum_seqlen].contiguous()
-        loss, z_loss = cross_entropy(
+        loss, loss_without_z_loss, z_loss = cross_entropy(
             outputs,
             (labels, loss_mask),
             _fp16=neox_args.fp16_lm_cross_entropy,
             _fused=neox_args.cross_entropy_fusion,
             z_loss=neox_args.z_loss,
-            return_z_loss=True,
+            return_loss_parts=True,
         )
         if z_loss is not None:
+            metrics["lm_loss_without_z_loss"] = loss_without_z_loss.detach()
             metrics["z_loss"] = z_loss.detach()
     elif neox_args.train_impl == "rm":
         maybe_tuple = model((tokens, position_ids, attention_mask), neox_args=neox_args)
@@ -656,6 +657,7 @@ def forward_step(
         # Like the LM z-loss, this regularizer is left out of evaluation.
         if neox_args.z_loss != 0 and torch.is_grad_enabled():
             z_loss = (neox_args.z_loss * (pos**2 + neg**2)).mean()
+            metrics["lm_loss_without_z_loss"] = loss.detach()
             metrics["z_loss"] = z_loss.detach()
             loss = loss + z_loss
     elif neox_args.train_impl == "dpo":
@@ -1387,6 +1389,10 @@ def train_step_pipe(neox_args, timers, model, data_iterator):
     assert neox_args.deepspeed
     loss = model.train_batch(data_iter=data_iterator)
     loss_dict = {"lm_loss": loss}
+    # The model's additional losses (the z-loss parts), reduced like the loss.
+    additional_losses = getattr(model, "agg_additional_losses", None)
+    if additional_losses is not None:
+        loss_dict.update(additional_losses)
     # Don't break Megatron's timers because we changed code paths.
     for t in [
         "forward",

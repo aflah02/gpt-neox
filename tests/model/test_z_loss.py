@@ -24,7 +24,7 @@ import torch.nn.functional as F
 
 from megatron import mpu
 from megatron.model import gpt2_model
-from megatron.training import forward_step
+from megatron.training import forward_step, train_step_pipe
 
 pytestmark = pytest.mark.cpu
 
@@ -88,8 +88,12 @@ def _check_sharded_lm_loss(
     expected_grad = reference.grad.chunk(world_size, dim=-1)[rank].to(dtype)
     torch.testing.assert_close(shard.grad, expected_grad, **tols)
     if coefficient:
+        torch.testing.assert_close(
+            metrics["lm_loss_without_z_loss"].float(), expected_ce.detach(), **tols
+        )
         torch.testing.assert_close(metrics["z_loss"], expected_z_loss.detach(), **tols)
     else:
+        assert "lm_loss_without_z_loss" not in metrics
         assert "z_loss" not in metrics
 
     # Evaluation runs under no_grad and reports plain cross entropy.
@@ -99,6 +103,7 @@ def _check_sharded_lm_loss(
             shard, labels, mask, fused, fp16_lm_cross_entropy, coefficient
         )
     torch.testing.assert_close(eval_loss.float(), expected_ce.detach(), **tols)
+    assert "lm_loss_without_z_loss" not in eval_metrics
     assert "z_loss" not in eval_metrics
 
 
@@ -186,24 +191,60 @@ def test_tensor_parallel_lm_loss_matches_dense_loss_and_gradients(tmp_path):
     )
 
 
-def test_pipeline_loss_uses_configured_z_loss(monkeypatch):
+def _pipeline_model(monkeypatch, z_loss, cross_entropy):
     from megatron.neox_arguments import NeoXArgs
     from tests.common import BASE_CONFIG
 
     args = NeoXArgs.from_dict(
-        dict(BASE_CONFIG, global_num_gpus=1, z_loss=0.125, cross_entropy_fusion=True)
+        dict(BASE_CONFIG, global_num_gpus=1, z_loss=z_loss, cross_entropy_fusion=True)
     )
     pipeline_init = Mock(return_value=None)
-    cross_entropy = Mock()
     monkeypatch.setattr(gpt2_model.PipelineModule, "__init__", pipeline_init)
     monkeypatch.setattr(gpt2_model, "cross_entropy", cross_entropy)
-    gpt2_model.GPT2ModelPipe(args)
+    model = gpt2_model.GPT2ModelPipe(args)
+    return model, pipeline_init.call_args.kwargs["loss_fn"]
 
-    loss_fn = pipeline_init.call_args.kwargs["loss_fn"]
+
+def test_pipeline_loss_reports_z_loss_parts(monkeypatch):
+    loss = torch.tensor(3.0, requires_grad=True)
+    loss_without_z_loss, z_loss = torch.tensor(2.5), torch.tensor(0.5)
+    cross_entropy = Mock(return_value=(loss, loss_without_z_loss, z_loss))
+    model, loss_fn = _pipeline_model(monkeypatch, 0.125, cross_entropy)
+
+    # Stages without the loss report placeholders under the same names.
+    assert list(model.get_additional_losses()) == ["lm_loss_without_z_loss", "z_loss"]
+
     logits, labels = object(), object()
-    loss_fn(logits, labels)
+    assert loss_fn(logits, labels) is loss
     cross_entropy.assert_called_once_with(
-        logits, labels, _fp16=False, _fused=True, z_loss=0.125
+        logits, labels, _fp16=False, _fused=True, z_loss=0.125, return_loss_parts=True
+    )
+    parts = model.get_additional_losses()
+    assert list(parts) == ["lm_loss_without_z_loss", "z_loss"]
+    torch.testing.assert_close(parts["lm_loss_without_z_loss"], loss_without_z_loss)
+    torch.testing.assert_close(parts["z_loss"], z_loss)
+
+
+def test_pipeline_loss_reports_nothing_without_z_loss(monkeypatch):
+    loss = torch.tensor(3.0)
+    cross_entropy = Mock(return_value=(loss, None, None))
+    model, loss_fn = _pipeline_model(monkeypatch, 0.0, cross_entropy)
+
+    assert loss_fn(object(), object()) is loss
+    assert model.get_additional_losses() is None
+
+
+@pytest.mark.parametrize("with_z_loss", [False, True])
+def test_train_step_pipe_logs_additional_losses(with_z_loss):
+    loss = torch.tensor(3.0)
+    parts = {"lm_loss_without_z_loss": torch.tensor(2.5), "z_loss": torch.tensor(0.5)}
+    engine = SimpleNamespace(
+        train_batch=Mock(return_value=loss),
+        agg_additional_losses=parts if with_z_loss else None,
+    )
+    loss_dict = train_step_pipe(SimpleNamespace(deepspeed=True), Mock(), engine, None)
+    assert loss_dict == (
+        {"lm_loss": loss, **parts} if with_z_loss else {"lm_loss": loss}
     )
 
 
@@ -248,8 +289,12 @@ def test_reward_model_z_loss_uses_selected_scores(coefficient):
     torch.testing.assert_close(loss, expected)
     torch.testing.assert_close(scores.grad, reference.grad)
     if coefficient:
+        torch.testing.assert_close(
+            metrics["lm_loss_without_z_loss"], expected_rm_loss.detach()
+        )
         torch.testing.assert_close(metrics["z_loss"], expected_z_loss.detach())
     else:
+        assert "lm_loss_without_z_loss" not in metrics
         assert "z_loss" not in metrics
 
     # Evaluation runs under no_grad and leaves the z-loss out.
@@ -258,4 +303,5 @@ def test_reward_model_z_loss_uses_selected_scores(coefficient):
             scores.detach(), coefficient
         )
     torch.testing.assert_close(eval_loss, expected_rm_loss.detach())
+    assert "lm_loss_without_z_loss" not in eval_metrics
     assert "z_loss" not in eval_metrics

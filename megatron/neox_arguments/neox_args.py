@@ -1332,7 +1332,7 @@ class NeoXArgsTraining(NeoXArgsTemplate):
     Z-loss coefficient, for train_impl "normal" and "rm". It is added to the training loss only; evaluation reports the loss without it.
     For "normal", adds z_loss * mean(log(Z)^2) over loss-masked tokens, where log(Z) is the logsumexp of the output logits (PaLM, https://arxiv.org/pdf/2204.02311, uses 1e-4).
     For "rm", adds z_loss * mean(r_chosen^2 + r_rejected^2), which penalizes the reward magnitude.
-    Logged as z_loss, except with pipeline parallelism.
+    While it is active, training also logs lm_loss_without_z_loss and z_loss, which sum to lm_loss.
     """
 
     kto_beta: float = 0.1
