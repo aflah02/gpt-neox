@@ -60,48 +60,15 @@ def gpt2_attention_mask_func(attention_scores, ltor_mask):
     return attention_scores
 
 
-class _VocabParallelZLoss(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, vocab_parallel_logits):
-        logits = vocab_parallel_logits.float()
-        logits_max = torch.max(logits, dim=-1)[0]
-        torch.distributed.all_reduce(
-            logits_max,
-            op=torch.distributed.ReduceOp.MAX,
-            group=mpu.get_model_parallel_group(),
-        )
+def cross_entropy(
+    output, labels, _fp16=False, _fused=False, z_loss=0.0, return_z_loss=False
+):
+    """Masked mean cross entropy of vocab-parallel logits, plus the optional z-loss.
 
-        exp_logits = torch.exp(logits - logits_max.unsqueeze(dim=-1))
-        sum_exp_logits = exp_logits.sum(dim=-1)
-        torch.distributed.all_reduce(
-            sum_exp_logits,
-            op=torch.distributed.ReduceOp.SUM,
-            group=mpu.get_model_parallel_group(),
-        )
-
-        softmax = exp_logits.div(sum_exp_logits.unsqueeze(dim=-1))
-        log_z = torch.log(sum_exp_logits) + logits_max
-        ctx.input_dtype = vocab_parallel_logits.dtype
-        ctx.save_for_backward(softmax, log_z)
-        return log_z.square()
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        softmax, log_z = ctx.saved_tensors
-        grad_input = 2 * log_z.unsqueeze(dim=-1) * softmax
-        grad_input.mul_(grad_output.unsqueeze(dim=-1))
-        return grad_input.to(ctx.input_dtype)
-
-
-def vocab_parallel_z_loss(vocab_parallel_logits, loss_mask):
-    """Masked mean squared log-partition penalty for vocab-parallel logits."""
-    z_losses = _VocabParallelZLoss.apply(vocab_parallel_logits)
-    loss_mask = loss_mask.view(-1)
-    return torch.sum(z_losses.view(-1) * loss_mask) / loss_mask.sum()
-
-
-def cross_entropy(output, labels, _fp16=False, _fused=False, z_loss=0.0):
-    """From pretrain_gpt2:forward_step()"""
+    The z-loss, z_loss * mean(log(Z)^2) over loss-masked tokens, is added only
+    while gradients are enabled, so evaluation reports plain cross entropy. With
+    return_z_loss, also returns the added z-loss term, or None if none was added.
+    """
     """
     if self.fp16_lm_cross_entropy:
         assert output.dtype == torch.half
@@ -111,30 +78,44 @@ def cross_entropy(output, labels, _fp16=False, _fused=False, z_loss=0.0):
         return loss
     """
     labels, loss_mask = labels[0], labels[1]
-    z_loss_value = None
-    if z_loss != 0:
-        z_loss_value = z_loss * vocab_parallel_z_loss(output, loss_mask)
     if _fp16:
         assert output.dtype == torch.half and loss_mask.dtype == torch.half
+    # The z-loss is a training regularizer, and evaluation runs under no_grad.
+    use_z_loss = z_loss != 0 and torch.is_grad_enabled()
     if _fused:
         from megatron.fused_kernels.fused_cross_entropy import (
             fused_vocab_parallel_cross_entropy,
         )
 
-        losses = fused_vocab_parallel_cross_entropy(
-            output.contiguous(), labels, mpu.get_model_parallel_group()
+        result = fused_vocab_parallel_cross_entropy(
+            output.contiguous(),
+            labels,
+            mpu.get_model_parallel_group(),
+            return_log_z=use_z_loss,
         )
     elif _fp16:
-        losses = mpu.vocab_parallel_cross_entropy(output.contiguous(), labels)
+        result = mpu.vocab_parallel_cross_entropy(
+            output.contiguous(), labels, return_log_z=use_z_loss
+        )
     else:
         # vocab_parallel_cross_entropy overwrites its input, so fp32 logits need a copy
-        losses = mpu.vocab_parallel_cross_entropy(
-            output.to(torch.float32, copy=True).contiguous(), labels
+        result = mpu.vocab_parallel_cross_entropy(
+            output.to(torch.float32, copy=True).contiguous(),
+            labels,
+            return_log_z=use_z_loss,
         )
+    losses, log_z = result if use_z_loss else (result, None)
     loss_mask = loss_mask.view(-1)
-    loss = torch.sum(losses.view(-1) * loss_mask) / loss_mask.sum()
-    if z_loss_value is not None:
-        loss = loss + z_loss_value
+    num_tokens = loss_mask.sum()
+    loss = torch.sum(losses.view(-1) * loss_mask) / num_tokens
+    z_loss_term = None
+    if use_z_loss:
+        z_loss_term = (
+            z_loss * torch.sum(log_z.view(-1).square() * loss_mask) / num_tokens
+        )
+        loss = loss + z_loss_term
+    if return_z_loss:
+        return loss, z_loss_term
     return loss
 
 

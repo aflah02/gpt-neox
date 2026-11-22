@@ -619,13 +619,16 @@ def forward_step(
         ):
             loss_mask = loss_mask[:, : neox_args.curriculum_seqlen].contiguous()
             labels = labels[:, : neox_args.curriculum_seqlen].contiguous()
-        loss = cross_entropy(
+        loss, z_loss = cross_entropy(
             outputs,
             (labels, loss_mask),
             _fp16=neox_args.fp16_lm_cross_entropy,
             _fused=neox_args.cross_entropy_fusion,
             z_loss=neox_args.z_loss,
+            return_z_loss=True,
         )
+        if z_loss is not None:
+            metrics["z_loss"] = z_loss.detach()
     elif neox_args.train_impl == "rm":
         maybe_tuple = model((tokens, position_ids, attention_mask), neox_args=neox_args)
         if type(maybe_tuple) is tuple:
@@ -650,8 +653,11 @@ def forward_step(
             metrics["margin"] = (pos - neg).clone().detach().mean()
             metrics["accuracy"] = ((pos - neg) > 0).clone().detach().float().mean()
         loss = -F.logsigmoid(pos - neg).mean()
-        if neox_args.z_loss != 0:
-            loss = loss + (neox_args.z_loss * (pos**2 + neg**2)).mean()
+        # Like the LM z-loss, this regularizer is left out of evaluation.
+        if neox_args.z_loss != 0 and torch.is_grad_enabled():
+            z_loss = (neox_args.z_loss * (pos**2 + neg**2)).mean()
+            metrics["z_loss"] = z_loss.detach()
+            loss = loss + z_loss
     elif neox_args.train_impl == "dpo":
         # Based on https://github.com/eric-mitchell/direct-preference-optimization/blob/main/trainers.py#L90
         with torch.inference_mode():

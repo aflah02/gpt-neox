@@ -1634,6 +1634,13 @@ class NeoXArgs(*BASE_CLASSES):
             raise ValueError(error_message)
             return False
 
+        if self.z_loss < 0:
+            raise ValueError("`z_loss` must be greater than or equal to 0.0.")
+        if self.z_loss != 0 and self.train_impl not in ("normal", "rm"):
+            raise ValueError(
+                f"`z_loss` is only supported with train_impl normal or rm, not {self.train_impl}."
+            )
+
         # assert that if one of train/test/valid_data_path are provided, data_path should not be
         has_separate_path = [
             data_path is not None

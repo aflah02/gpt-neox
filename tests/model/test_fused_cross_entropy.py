@@ -32,8 +32,8 @@ def test_cross_entropy_routes_to_fused_implementation(monkeypatch):
     tp_group = object()
     calls = []
 
-    def fused_vocab_parallel_cross_entropy(logits, targets, group):
-        calls.append((logits, targets, group))
+    def fused_vocab_parallel_cross_entropy(logits, targets, group, return_log_z):
+        calls.append((logits, targets, group, return_log_z))
         return torch.full_like(targets, 2.0, dtype=output.dtype)
 
     monkeypatch.setitem(
@@ -48,7 +48,7 @@ def test_cross_entropy_routes_to_fused_implementation(monkeypatch):
     loss = cross_entropy(output, (labels, loss_mask), _fused=True)
 
     assert loss.item() == 2.0
-    assert calls == [(output, labels, tp_group)]
+    assert calls == [(output, labels, tp_group, False)]
 
 
 def test_fused_cross_entropy_matches_reference_and_uses_two_collectives(monkeypatch):
