@@ -1526,7 +1526,6 @@ Training Arguments
 
     Z-loss coefficient, for train_impl "normal" and "rm". It is added to the training loss only; evaluation reports the loss without it.
     For "normal", adds z_loss * mean(log(Z)^2) over loss-masked tokens, where log(Z) is the logsumexp of the output logits (PaLM, https://arxiv.org/pdf/2204.02311, uses 1e-4).
-    Baichuan 2 (https://arxiv.org/pdf/2309.10305) uses a related penalty on the squared maximum logit.
     For "rm", adds z_loss * mean(r_chosen^2 + r_rejected^2), which penalizes the reward magnitude.
     Logged as z_loss, except with pipeline parallelism.
 
