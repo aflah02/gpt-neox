@@ -26,7 +26,7 @@ from .utils import VocabUtility
 
 class _VocabParallelCrossEntropy(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, vocab_parallel_logits, target):
+    def forward(ctx, vocab_parallel_logits, target, return_log_z):
 
         # Maximum value along vocab dimension across all GPUs.
         logits_max = torch.max(vocab_parallel_logits, dim=-1)[0]
@@ -82,23 +82,22 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
         )
 
         # Loss = log(sum(exp(logits))) - predicted-logit.
-        loss = torch.log(sum_exp_logits) - predicted_logits
-
-        # log(Z) of the input logits, in fp32, for the z-loss. It reuses the
-        # reduced max and sum, so it needs no extra communication.
-        log_z = torch.log(sum_exp_logits.float()) + logits_max.float()
+        log_sum_exp_logits = torch.log(sum_exp_logits)
+        loss = log_sum_exp_logits - predicted_logits
 
         # Store softmax, target-mask and masked-target for backward pass.
         exp_logits.div_(sum_exp_logits.unsqueeze(dim=-1))
         ctx.save_for_backward(exp_logits, target_mask, masked_target_1d)
-        # An unused output gets a None gradient, so the plain cross entropy
-        # backward stays unchanged when log(Z) is not used.
-        ctx.set_materialize_grads(False)
-
-        return loss, log_z
+        if return_log_z:
+            ctx.set_materialize_grads(False)
+            # Keep log(Z) in fp32 even when cross entropy uses a different dtype.
+            if sum_exp_logits.dtype != torch.float32:
+                log_sum_exp_logits = torch.log(sum_exp_logits.float())
+            return loss, log_sum_exp_logits + logits_max.float()
+        return loss
 
     @staticmethod
-    def backward(ctx, grad_output, grad_log_z):
+    def backward(ctx, grad_output, grad_log_z=None):
 
         # Retrieve tensors from the forward path.
         softmax, target_mask, masked_target_1d = ctx.saved_tensors
@@ -126,7 +125,7 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
                 -1
             )
 
-        return grad_input, None
+        return grad_input, None, None
 
 
 def vocab_parallel_cross_entropy(vocab_parallel_logits, target, return_log_z=False):
@@ -136,7 +135,4 @@ def vocab_parallel_cross_entropy(vocab_parallel_logits, target, return_log_z=Fal
     token's fp32 log(Z) = logsumexp(logits), whose gradient reuses the saved
     softmax, so the z-loss costs no extra memory or communication.
     """
-    loss, log_z = _VocabParallelCrossEntropy.apply(vocab_parallel_logits, target)
-    if return_log_z:
-        return loss, log_z
-    return loss
+    return _VocabParallelCrossEntropy.apply(vocab_parallel_logits, target, return_log_z)

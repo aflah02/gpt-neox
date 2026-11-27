@@ -43,6 +43,25 @@ def _sharded_logits(device, dtype):
     return logits, labels, mask
 
 
+@pytest.mark.parametrize("fused", [False, True], ids=["unfused", "fused"])
+def test_cross_entropy_skips_log_z_when_disabled(monkeypatch, fused):
+    monkeypatch.setattr(mpu.initialize, "_MODEL_PARALLEL_GROUP", object())
+    monkeypatch.setattr(dist, "get_rank", lambda group: 0)
+    monkeypatch.setattr(dist, "get_world_size", lambda group: 1)
+    monkeypatch.setattr(dist, "all_reduce", lambda *args, **kwargs: None)
+    logits, labels, mask = _sharded_logits("cpu", torch.float32)
+
+    with torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU]
+    ) as profile:
+        gpt2_model.cross_entropy(logits, (labels, mask), _fused=fused)
+
+    # CE needs one log. Restoring the subtracted maximum would add it to every token.
+    ops = {event.key: event.count for event in profile.key_averages()}
+    assert ops["aten::log"] == 1
+    assert ops.get("aten::add", 0) == 0
+
+
 def _lm_forward_step(shard, labels, mask, fused, fp16_lm_cross_entropy, coef):
     args = SimpleNamespace(
         train_impl="normal",

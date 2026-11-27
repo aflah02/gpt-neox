@@ -82,16 +82,16 @@ def calculate_predicted_logits(
 def calculate_cross_entropy_loss(
     exp_logits: torch.Tensor,
     predicted_logits_sum_exp_logits: torch.Tensor,
-    logits_max: torch.Tensor,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Normalize probabilities and calculate the per-token loss and log(Z)."""
+    logits_max: Optional[torch.Tensor],
+) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+    """Normalize probabilities and calculate the loss, optionally restoring log(Z)."""
     split_at = predicted_logits_sum_exp_logits.size(0) // 2
     predicted_logits = predicted_logits_sum_exp_logits[:split_at]
     sum_exp_logits = predicted_logits_sum_exp_logits[split_at:]
     log_sum_exp_logits = torch.log(sum_exp_logits)
     loss = log_sum_exp_logits - predicted_logits
     # log(Z) of the input logits, for the z-loss, from the already reduced values.
-    log_z = log_sum_exp_logits + logits_max
+    log_z = log_sum_exp_logits + logits_max if logits_max is not None else None
     exp_logits.div_(sum_exp_logits.unsqueeze(dim=-1))
     return exp_logits, loss, log_z
 
@@ -126,7 +126,7 @@ def calculate_gradients(
 
 class _VocabParallelCrossEntropy(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, vocab_parallel_logits, target, tp_group):
+    def forward(ctx, vocab_parallel_logits, target, tp_group, return_log_z):
         ctx.logits_dtype = vocab_parallel_logits.dtype
         vocab_parallel_logits, logits_max = calculate_logits_max(vocab_parallel_logits)
         torch.distributed.all_reduce(
@@ -163,16 +163,18 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
         )
 
         exp_logits, loss, log_z = calculate_cross_entropy_loss(
-            exp_logits, predicted_logits_sum_exp_logits, logits_max
+            exp_logits,
+            predicted_logits_sum_exp_logits,
+            logits_max if return_log_z else None,
         )
         ctx.save_for_backward(exp_logits, target_mask, masked_target_1d)
-        # An unused output gets a None gradient, so the plain cross entropy
-        # backward stays unchanged when log(Z) is not used.
-        ctx.set_materialize_grads(False)
-        return loss, log_z
+        if log_z is not None:
+            ctx.set_materialize_grads(False)
+            return loss, log_z
+        return loss
 
     @staticmethod
-    def backward(ctx, grad_output, grad_log_z):
+    def backward(ctx, grad_output, grad_log_z=None):
         softmax, target_mask, masked_target_1d = ctx.saved_tensors
         if grad_output is None:
             grad_output = torch.zeros_like(grad_log_z)
@@ -184,7 +186,7 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
             masked_target_1d,
             ctx.logits_dtype,
         )
-        return grad_input, None, None
+        return grad_input, None, None, None
 
 
 def fused_vocab_parallel_cross_entropy(
@@ -196,9 +198,6 @@ def fused_vocab_parallel_cross_entropy(
     for the z-loss. Its gradient reuses the saved softmax, so it costs no extra
     memory or communication.
     """
-    loss, log_z = _VocabParallelCrossEntropy.apply(
-        vocab_parallel_logits, target, tp_group
+    return _VocabParallelCrossEntropy.apply(
+        vocab_parallel_logits, target, tp_group, return_log_z
     )
-    if return_log_z:
-        return loss, log_z
-    return loss
